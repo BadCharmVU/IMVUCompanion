@@ -3,9 +3,16 @@ bin/
 obj/
 out/
 publish/
+publish.*/
 release/
+release2/
+installer/Output/
 tools/**/bin/
 tools/**/obj/
+
+# Local build logs
+build-log.txt
+iscc-log.txt
 
 # Visual Studio / Rider
 .vs/

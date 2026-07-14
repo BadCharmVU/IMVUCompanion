@@ -17,12 +17,8 @@ AppUpdatesURL=https://github.com/BadCharmVU/IMVUCompanion/releases
 DefaultDirName={autopf}\IMVU Companion
 DefaultGroupName=IMVU Companion
 AllowNoIcons=yes
-#ifndef OutputDir
 OutputDir=..\release
-#endif
-#ifndef OutputBaseFilename
 OutputBaseFilename=IMVUCompanion-Setup-v{#AppVersion}
-#endif
 SetupIconFile=..\icon.ico
 UninstallDisplayIcon={app}\IMVUCompanion.exe
 Compression=lzma2

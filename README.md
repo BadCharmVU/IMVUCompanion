@@ -1,60 +1,62 @@
 # IMVU Companion
 
-WPF desktop app with an embedded **IMVU Next** chat (WebView2). Greets users when they join, responds to `!commands`, and supports optional welcome whispers.
+A Windows desktop bot for **IMVU Next** chat rooms. It runs IMVU inside the app (WebView2), greets people when they join, answers `!commands`, and can send an optional welcome whisper.
 
-**Current version:** v0.7
+**Current release:** v0.7.0  
+**Install (testers):** https://github.com/BadCharmVU/IMVUCompanion/releases/latest — download **`IMVUCompanion-Setup-v0.7.0.exe`** only (ignore GitHub’s auto-generated “Source code” links; those cannot be turned off).
 
-**Repository:** https://github.com/BadCharmVU/IMVUCompanion
+---
 
-**Download (releases):** https://github.com/BadCharmVU/IMVUCompanion/releases/latest
+## What it does
+
+- Embedded IMVU chat — log in and open your room in the left panel
+- Join greetings from **Message Templates** (`{name}` placeholder)
+- Optional extra welcome (public or whisper)
+- **!Commands** with categories and languages
+- **!bbot** AI hook (placeholder reply until providers are connected)
+- Activity log, English/Russian UI
+- **Auto-update** when a new installer is published on GitHub
 
 ---
 
 ## Requirements
 
 - Windows 10/11
-- [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)
-- [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) — for building/running from source
+- [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) — usually already installed on Windows 11
 
 ---
 
-## Quick start
+## Daily development (this PC)
 
-### From source
+**Source code lives here:**
+
+`C:\Users\serve\ansel\IMVUCompanion`
+
+That folder is the working copy. GitHub (`main`) is backup/sync — not where you run the app day to day.
+
+### Run after code changes
 
 ```powershell
-git clone https://github.com/BadCharmVU/IMVUCompanion.git
-cd IMVUCompanion
+cd C:\Users\serve\ansel\IMVUCompanion
 dotnet build -c Release
 .\bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe
 ```
 
-### First run
+Or: `dotnet run -c Release`
 
-1. Log in to IMVU in the **left panel** (login is saved in `%LOCALAPPDATA%\IMVUCompanion\WebView2`).
-2. Open your chat room in the embedded browser.
+No installer build is needed while developing. **Only run `.\scripts\Publish-Release.ps1` when you decide a version is ready for testers.**
+
+### First-time setup in the app
+
+1. Log in to IMVU in the **left panel** (session saved under `%LOCALAPPDATA%\IMVUCompanion\WebView2`).
+2. Open your chat room.
 3. Set **Bot Display Name** (AI Providers) to match your IMVU name exactly.
 4. Click **Start Bot**.
 
-Use **Exit** (top-right) to close the app. The window **X** is disabled on purpose so the bot is not closed accidentally.
+Use **Exit** (top-right) to close. The window **X** is disabled so the bot is not closed by accident.
 
----
-
-## Features
-
-- Embedded IMVU Next chat — no separate browser window
-- Join greetings from editable **Message Templates** (`{name}` placeholder)
-- Optional extra welcome message (public or whisper)
-- **!Commands** with categories and languages
-- **!bbot** AI hook (maintenance reply until providers are wired)
-- Activity log with colored categories
-- **Auto-update** — version button top-right checks GitHub for new releases
-
----
-
-## Configuration files
-
-Created next to the `.exe` at runtime (not in git):
+### Config files (created next to the `.exe` when you run)
 
 | File | Purpose |
 |------|---------|
@@ -62,46 +64,57 @@ Created next to the `.exe` at runtime (not in git):
 | `commands.json` | `!command` replies |
 | `ai_settings.json` | API keys — copy from `ai_settings.example.json` |
 
+These are not committed to git.
+
 ---
 
-## Build the Windows installer (for testers)
+## When you are ready for a new release
+
+Only when **you** say so:
 
 ```powershell
 cd C:\Users\serve\ansel\IMVUCompanion
 .\scripts\Publish-Release.ps1
 ```
 
-Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`).
+Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php). Output: `release\IMVUCompanion-Setup-vX.Y.Z.exe`
 
-Output: `release\IMVUCompanion-Setup-v0.7.0.exe`
+Then on GitHub: new tag, upload the `.exe`, update `version.json` on `main` for auto-update.
 
-Testers run the setup wizard — installs to **Program Files**, Start Menu shortcut, and uninstaller (like any normal Windows app).
+Test the installer on your **other PC** — that machine does not need the source repo.
 
-Upload `IMVUCompanion-Setup-v0.7.0.exe` to [GitHub Releases](https://github.com/BadCharmVU/IMVUCompanion/releases) tag `v0.7.0`.
+---
+
+## Sync code with GitHub
+
+```powershell
+cd C:\Users\serve\ansel\IMVUCompanion
+git add -A
+git commit -m "describe your change"
+git push
+```
+
+Clone on another dev PC:
+
+```powershell
+git clone https://github.com/BadCharmVU/IMVUCompanion.git
+cd IMVUCompanion
+dotnet build -c Release
+```
 
 ---
 
 ## Windows SmartScreen
 
-Unsigned builds may be blocked the first time:
-
-1. Right-click the `.exe` → **Properties** → check **Unblock** → OK  
-2. Or add the project folder under Windows Security → Exclusions
+Unsigned builds may warn on first run: right-click the `.exe` → **Properties** → **Unblock** → OK.
 
 ---
 
 ## Project layout
 
-| Path | Description |
-|------|-------------|
-| `MainWindow.WebView.cs` | Chat observer, whisper logic, WebView2 |
+| File | Role |
+|------|------|
+| `MainWindow.WebView.cs` | Chat observer, whispers, WebView2 |
 | `MainWindow.xaml.cs` | Bot queue, greetings, commands |
-| `MainWindow.Update.cs` | Update check and one-click upgrade |
-| `PROGRESS-whisper-join.md` | In-progress join-whisper work notes |
-| `GITHUB-SETUP.md` | Git clone, push, and release workflow |
-
----
-
-## Changelog
-
-Release notes are published on [GitHub Releases](https://github.com/BadCharmVU/IMVUCompanion/releases). Update log for v0.7 will be added when you publish the release.
+| `MainWindow.Update.cs` | Update check and upgrade |
+| `scripts/Publish-Release.ps1` | Build installer (manual, on release only) |
