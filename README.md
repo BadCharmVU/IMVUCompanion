@@ -2,8 +2,8 @@
 
 A Windows desktop bot for **IMVU Next** chat rooms. It runs IMVU inside the app (WebView2), greets people when they join, answers `!commands`, and can send an optional welcome whisper.
 
-**Current release:** v0.7.0  
-**Install (testers):** https://github.com/BadCharmVU/IMVUCompanion/releases/latest — download **`IMVUCompanion-Setup-v0.7.0.exe`** only (ignore GitHub’s auto-generated “Source code” links; those cannot be turned off).
+**Current release:** v0.7.1  
+**Install (testers):** https://github.com/BadCharmVU/IMVUCompanion/releases/latest — download **`IMVUCompanion-Setup-v0.7.1.exe`** only (ignore GitHub’s auto-generated “Source code” links; those cannot be turned off).
 
 ---
 

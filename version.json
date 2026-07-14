@@ -1,5 +1,5 @@
 {
-  "version": "0.7.0",
-  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.7.0/IMVUCompanion-Setup-v0.7.0.exe",
-  "releaseNotes": "v0.7 — embedded IMVU chat, installer, auto-update, app icon."
+  "version": "0.7.1",
+  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.7.1/IMVUCompanion-Setup-v0.7.1.exe",
+  "releaseNotes": "v0.7.1 — fix startup crash (app icon), UI clock polish, session log line."
 }

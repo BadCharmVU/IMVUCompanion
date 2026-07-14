@@ -168,6 +168,7 @@ public partial class MainWindow : Window
 
     private CancellationTokenSource? _botCts;
     private bool _exiting = false;
+    private readonly DateTime _sessionStartedAt = DateTime.Now;
     // Message templates for events like Welcoming - user editable, random pick, {name} placeholder
     private Dictionary<string, Dictionary<string, List<string>>> _messageTemplates = new Dictionary<string, Dictionary<string, List<string>>>(StringComparer.OrdinalIgnoreCase);
     private readonly Random _random = new Random();
@@ -214,7 +215,7 @@ public partial class MainWindow : Window
             File.AppendAllText(@"C:\Users\serve\imvu_companion_crash.log", $"[{DateTime.Now}] LOADED: Web structured DOM (no Classic :/name:text) + internal profile launch for simple no-relogin. Event only. Cleanup done.\n\n");
 
             _aliveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            _aliveTimer.Tick += (s, args) => { try { if (AliveText != null) AliveText.Text = DateTime.Now.ToString("MM/dd/yyyy - HH:mm:ss"); } catch { } };
+            _aliveTimer.Tick += (s, args) => { try { if (AliveText != null) AliveText.Text = DateTime.Now.ToString("MM.dd.yyyy - HH:mm:ss"); } catch { } };
             _aliveTimer.Start();
 
             _robustHeartbeatTimer = new System.Timers.Timer(1500);
@@ -262,7 +263,7 @@ public partial class MainWindow : Window
 
             InitAiProvidersUi();
 
-            AppendLog("v0.7: Embedded chat bot with auto-update.", LogCategory.Info);
+            AppendLog($"{AppVersion.ShortLabel} — {_sessionStartedAt:MM.dd.yyyy - HH:mm:ss}", LogCategory.Info);
             InitAutoUpdateUi();
 
             _ = InitWebViewAsync();

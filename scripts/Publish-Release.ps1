@@ -6,6 +6,12 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location $ProjectRoot
 
+$csproj = Get-Content (Join-Path $ProjectRoot "IMVUCompanion.csproj") -Raw
+$appVersion = [regex]::Match($csproj, '<Version>([^<]+)</Version>').Groups[1].Value
+if (-not $appVersion) { throw "Could not read <Version> from IMVUCompanion.csproj" }
+$setupName = "IMVUCompanion-Setup-v$appVersion.exe"
+Write-Host "==> Release version: v$appVersion"
+
 Write-Host "==> Building icon.ico from icon.png"
 & (Join-Path $PSScriptRoot "Build-Icon.ps1") -ProjectRoot $ProjectRoot
 
@@ -50,7 +56,7 @@ New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
 $publishRel = (Resolve-Path $publishDir).Path
 $publishRel = $publishRel.Substring($ProjectRoot.Length).TrimStart('\')
 $publishDefine = "..\$publishRel"
-$setup = Join-Path $releaseDir "IMVUCompanion-Setup-v0.7.0.exe"
+$setup = Join-Path $releaseDir $setupName
 if (Test-Path $setup) {
     try { Remove-Item $setup -Force } catch {
         Rename-Item $setup ($setup + ".old") -Force
@@ -58,7 +64,7 @@ if (Test-Path $setup) {
 }
 $iss = Join-Path $ProjectRoot "installer\IMVUCompanion.iss"
 & $iscc "/O$releaseDir" "/DPublishDir=$publishDefine" $iss
-$setup = Join-Path $releaseDir "IMVUCompanion-Setup-v0.7.0.exe"
+$setup = Join-Path $releaseDir $setupName
 if (Test-Path $setup) {
     Write-Host "==> Installer ready: $setup"
 } else {

@@ -1,6 +1,6 @@
 # IMVU Companion — Join Whisper Progress (paused)
 
-**Last version:** v0.7
+**Last version:** v0.7.1 (released 2026-07-14 — icon crash fix, UI clock, session log line)
 **Build:** `dotnet build C:\Users\serve\ansel\IMVUCompanion\IMVUCompanion.csproj -c Release`  
 **Run:** `C:\Users\serve\ansel\IMVUCompanion\bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe`  
 **Status:** Join greet (public) works. Proactive join whisper still fails (opens self or blocked as `target-is-bot`).
@@ -91,5 +91,12 @@ name\ttext\t0\tjoinRef\tuserId
 Close `IMVUCompanion.exe` before build (file lock on exe).
 
 ---
+
+## Session 2026-07-14 (done for today)
+
+- v0.7.1 released: icon.ico startup crash fixed, clock UI, session start log line
+- v0.7.0 GitHub release replaced (broken installer crashed on launch)
+- Local dev: `.\scripts\Run-Dev.ps1` or `dotnet build` + `bin\Release\...\IMVUCompanion.exe`
+- Next: fix proactive join whisper (`target-is-bot` / self-whisper after avatar click)
 
 *Paused: user will continue later.*

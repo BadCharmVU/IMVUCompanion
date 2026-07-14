@@ -6,6 +6,8 @@ publish/
 publish.*/
 release/
 release2/
+release-v071/
+publish-log.txt
 installer/Output/
 tools/**/bin/
 tools/**/obj/
