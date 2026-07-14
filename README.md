@@ -64,15 +64,20 @@ Created next to the `.exe` at runtime (not in git):
 
 ---
 
-## Build a shareable installer exe
+## Build the Windows installer (for testers)
 
 ```powershell
-dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+cd C:\Users\serve\ansel\IMVUCompanion
+.\scripts\Publish-Release.ps1
 ```
 
-Output: `bin\Release\net8.0-windows10.0.19041.0\win-x64\publish\IMVUCompanion.exe`
+Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php) (`winget install JRSoftware.InnoSetup`).
 
-Attach that file to a GitHub Release and bump `version.json` so testers get one-click updates.
+Output: `release\IMVUCompanion-Setup-v0.7.0.exe`
+
+Testers run the setup wizard — installs to **Program Files**, Start Menu shortcut, and uninstaller (like any normal Windows app).
+
+Upload `IMVUCompanion-Setup-v0.7.0.exe` to [GitHub Releases](https://github.com/BadCharmVU/IMVUCompanion/releases) tag `v0.7.0`.
 
 ---
 

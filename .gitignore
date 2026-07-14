@@ -3,6 +3,9 @@ bin/
 obj/
 out/
 publish/
+release/
+tools/**/bin/
+tools/**/obj/
 
 # Visual Studio / Rider
 .vs/

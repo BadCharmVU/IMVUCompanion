@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="IMVU Companion v0.7"
+        Icon="icon.ico"
         MinHeight="640" MinWidth="960" Height="820" Width="1180"
         WindowStyle="SingleBorderWindow"
         Background="#1A1A2E"
@@ -490,8 +491,11 @@
                 </Border>
             </DockPanel>
 
-            <TextBlock Grid.Row="4" x:Name="AliveText" Text="" Foreground="#505070" FontSize="9"
-                       VerticalAlignment="Center"/>
+            <Grid Grid.Row="4" MinHeight="24" VerticalAlignment="Stretch">
+                <TextBlock x:Name="AliveText" Text="" Foreground="#B8B8E0" FontSize="10"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           TextAlignment="Center"/>
+            </Grid>
         </Grid>
     </Grid>
 </Window>

@@ -174,16 +174,28 @@ internal static class UpdateService
     public static bool TryScheduleApplyAndRestart(string newExePath, out string? error)
     {
         error = null;
+        if (!File.Exists(newExePath))
+        {
+            error = "Downloaded update file is missing.";
+            return false;
+        }
+
+        string fileName = Path.GetFileName(newExePath);
+        if (fileName.Contains("Setup", StringComparison.OrdinalIgnoreCase))
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = newExePath,
+                Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS",
+                UseShellExecute = true
+            });
+            return true;
+        }
+
         string? currentExe = Environment.ProcessPath;
         if (string.IsNullOrEmpty(currentExe) || !currentExe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
         {
             error = "Updates apply only to the installed .exe (not dotnet run).";
-            return false;
-        }
-
-        if (!File.Exists(newExePath))
-        {
-            error = "Downloaded update file is missing.";
             return false;
         }
 
