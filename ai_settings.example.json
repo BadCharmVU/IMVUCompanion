@@ -1,0 +1,14 @@
+{
+  "SelectedProvider": "Grok",
+  "BotDisplayName": "YourExactIMVUName",
+  "Providers": {
+    "Grok": {
+      "ApiKey": "PASTE_YOUR_KEY_HERE",
+      "Endpoint": "https://api.x.ai/v1",
+      "Model": "grok-2",
+      "Temperature": 0.7,
+      "MaxTokens": 1024,
+      "Enabled": true
+    }
+  }
+}

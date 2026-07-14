@@ -1,0 +1,41 @@
+# Build output
+bin/
+obj/
+out/
+publish/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Secrets & local runtime config (created next to exe when you run the app)
+ai_settings.json
+**/ai_settings.json
+
+# User-edited bot data (optional: remove these lines if you WANT to sync configs via Git)
+messages.json
+commands.json
+**/messages.json
+**/commands.json
+
+# Logs & crashes
+*.log
+crash_*.txt
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Playwright / tooling caches under output
+**/.playwright/
+
+# NuGet
+*.nupkg
+project.lock.json
+
+# WebView2 profile lives outside project (%LocalAppData%\IMVUCompanion\WebView2) — not in repo

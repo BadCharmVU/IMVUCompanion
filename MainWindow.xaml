@@ -1,0 +1,490 @@
+﻿<Window x:Class="IMVUCompanion.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="IMVU Companion v4.5"
+        MinHeight="640" MinWidth="960" Height="820" Width="1180"
+        WindowStyle="SingleBorderWindow"
+        Background="#1A1A2E"
+        Topmost="False"
+        ShowInTaskbar="True"
+        ResizeMode="CanResizeWithGrip">
+    <Window.Resources>
+        <Style x:Key="Win11Button" TargetType="Button">
+            <Setter Property="Background" Value="#1E1E32"/>
+            <Setter Property="Foreground" Value="#E8E8FF"/>
+            <Setter Property="BorderBrush" Value="#3A3A58"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,6"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                CornerRadius="6" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2C2C48"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#5050A0"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#161628"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="Win11ButtonAccent" TargetType="Button" BasedOn="{StaticResource Win11Button}">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="14,6"/>
+        </Style>
+        <Style x:Key="Win11BotToggleButton" TargetType="Button" BasedOn="{StaticResource Win11ButtonAccent}">
+            <Setter Property="MinWidth" Value="96"/>
+            <Setter Property="MinHeight" Value="28"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid SnapsToDevicePixels="True">
+                            <Border x:Name="GlowRing" CornerRadius="6" BorderThickness="2"
+                                    Background="Transparent" Visibility="Collapsed" IsHitTestVisible="False"
+                                    Panel.ZIndex="0">
+                                <Border.BorderBrush>
+                                    <LinearGradientBrush SpreadMethod="Repeat" StartPoint="0,0" EndPoint="1,0">
+                                        <GradientStop Color="#FFFFFF" Offset="0"/>
+                                        <GradientStop Color="#1A1A2E" Offset="0.22"/>
+                                        <GradientStop Color="#C8C8FF" Offset="0.5"/>
+                                        <GradientStop Color="#1A1A2E" Offset="0.78"/>
+                                        <GradientStop Color="#FFFFFF" Offset="1"/>
+                                        <LinearGradientBrush.RelativeTransform>
+                                            <RotateTransform x:Name="BotGlowRotate" CenterX="0.5" CenterY="0.5"/>
+                                        </LinearGradientBrush.RelativeTransform>
+                                    </LinearGradientBrush>
+                                </Border.BorderBrush>
+                            </Border>
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                    CornerRadius="6" Padding="{TemplateBinding Padding}" Margin="2"
+                                    Panel.ZIndex="1" SnapsToDevicePixels="True">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2C2C48"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#5050A0"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#161628"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="Win11ButtonSmall" TargetType="Button" BasedOn="{StaticResource Win11Button}">
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="FontSize" Value="10"/>
+        </Style>
+        <Style TargetType="Button" BasedOn="{StaticResource Win11Button}"/>
+
+        <!-- Shared dark dropdown palette -->
+        <SolidColorBrush x:Key="Win11ComboBg" Color="#1E1E32"/>
+        <SolidColorBrush x:Key="Win11ComboFg" Color="#E8E8FF"/>
+        <SolidColorBrush x:Key="Win11ComboBorder" Color="#3A3A58"/>
+        <SolidColorBrush x:Key="Win11ComboHover" Color="#2C2C48"/>
+        <SolidColorBrush x:Key="Win11ComboSelected" Color="#353560"/>
+        <SolidColorBrush x:Key="Win11ComboPopupBg" Color="#1A1A2E"/>
+
+        <Style x:Key="Win11ComboBoxItem" TargetType="ComboBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource Win11ComboFg}"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Win11ComboHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Win11ComboSelected}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <ControlTemplate x:Key="Win11ComboBoxToggleButtonTemplate" TargetType="ToggleButton">
+            <Border x:Name="Bd" Background="Transparent" SnapsToDevicePixels="True"/>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="Bd" Property="Background" Value="{StaticResource Win11ComboHover}"/>
+                </Trigger>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter TargetName="Bd" Property="Background" Value="{StaticResource Win11ComboSelected}"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <Style x:Key="Win11ComboBox" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{StaticResource Win11ComboFg}"/>
+            <Setter Property="Background" Value="{StaticResource Win11ComboBg}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Win11ComboBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
+            <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource Win11ComboBoxItem}"/>
+            <Setter Property="MaxDropDownHeight" Value="240"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid SnapsToDevicePixels="True">
+                            <ToggleButton x:Name="ToggleButton"
+                                          Template="{StaticResource Win11ComboBoxToggleButtonTemplate}"
+                                          Focusable="False"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          ClickMode="Press"/>
+                            <Border x:Name="Chrome" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="6" IsHitTestVisible="False"/>
+                            <Grid Margin="1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="20"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter x:Name="ContentSite" Grid.Column="0"
+                                                  Margin="{TemplateBinding Padding}"
+                                                  HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                  Content="{TemplateBinding SelectionBoxItem}"
+                                                  ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                  ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                                  ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                                  IsHitTestVisible="False"/>
+                                <Path Grid.Column="1" Data="M 0 0 L 4 4 L 8 0 Z"
+                                      Fill="#A0A0C8" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      Width="8" Height="5" Stretch="Fill" IsHitTestVisible="False"/>
+                            </Grid>
+                            <Popup x:Name="PART_Popup" AllowsTransparency="True"
+                                   Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   Focusable="False" PopupAnimation="Fade">
+                                <Border x:Name="DropDownBorder"
+                                        Background="{StaticResource Win11ComboPopupBg}"
+                                        BorderBrush="{StaticResource Win11ComboBorder}"
+                                        BorderThickness="1" CornerRadius="6"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                        Margin="0,2,0,0" Padding="2">
+                                    <ScrollViewer SnapsToDevicePixels="True">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#5050A0"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- File Explorer–style: looks like a toolbar button, opens a menu below -->
+        <Style x:Key="Win11ComboBoxButton" TargetType="ComboBox" BasedOn="{StaticResource Win11ComboBox}">
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid SnapsToDevicePixels="True">
+                            <ToggleButton x:Name="ToggleButton"
+                                          Template="{StaticResource Win11ComboBoxToggleButtonTemplate}"
+                                          Focusable="False"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                          ClickMode="Press"/>
+                            <Border x:Name="Chrome" Background="{TemplateBinding Background}"
+                                    BorderBrush="{StaticResource Win11ComboBorder}"
+                                    BorderThickness="1" CornerRadius="6" IsHitTestVisible="False"/>
+                            <Grid Margin="1">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="18"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter x:Name="ContentSite" Grid.Column="0"
+                                                  Margin="{TemplateBinding Padding}"
+                                                  HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                  Content="{TemplateBinding SelectionBoxItem}"
+                                                  ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                  ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                                  ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                                  IsHitTestVisible="False"/>
+                                <Path Grid.Column="1" Data="M 0 0 L 4 4 L 8 0 Z"
+                                      Fill="#A0A0C8" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      Width="8" Height="5" Stretch="Fill" IsHitTestVisible="False"/>
+                            </Grid>
+                            <Popup x:Name="PART_Popup" AllowsTransparency="True"
+                                   Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   Focusable="False" PopupAnimation="Fade">
+                                <Border Background="{StaticResource Win11ComboPopupBg}"
+                                        BorderBrush="{StaticResource Win11ComboBorder}"
+                                        BorderThickness="1" CornerRadius="6"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                        Margin="0,2,0,0" Padding="2">
+                                    <ScrollViewer SnapsToDevicePixels="True">
+                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Win11ComboHover}"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#5050A0"/>
+                            </Trigger>
+                            <Trigger Property="IsDropDownOpen" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Win11ComboSelected}"/>
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#5050A0"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="ComboBox" BasedOn="{StaticResource Win11ComboBox}"/>
+
+    </Window.Resources>
+    <Grid Margin="6">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="2.2*" MinWidth="420"/>
+            <ColumnDefinition Width="5"/>
+            <ColumnDefinition Width="*" MinWidth="300"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- Left: embedded IMVU -->
+        <Border Grid.Column="0" Background="#12121F" CornerRadius="6" BorderBrush="#2A2A45" BorderThickness="1">
+            <DockPanel Margin="4">
+                <Border DockPanel.Dock="Top" Background="#252540" CornerRadius="4" Padding="6,4" Margin="0,0,0,4">
+                    <DockPanel>
+                        <TextBlock Text="IMVU" Foreground="#A0B0FF" FontWeight="SemiBold" FontSize="12"
+                                   VerticalAlignment="Center" DockPanel.Dock="Left" Margin="0,0,8,0"/>
+                        <TextBlock x:Name="PageUrlText" Text="Loading…" Foreground="#8080A8" FontSize="10"
+                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis" DockPanel.Dock="Left"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" DockPanel.Dock="Right">
+                            <Button Content="Home" Style="{StaticResource Win11ButtonSmall}" Click="NavHome_Click" Margin="0,0,4,0"/>
+                            <Button Content="Chat" Style="{StaticResource Win11ButtonSmall}" Click="NavChat_Click" Margin="0,0,4,0"/>
+                            <Button Content="Reload" Style="{StaticResource Win11ButtonSmall}" Click="NavReload_Click"/>
+                        </StackPanel>
+                    </DockPanel>
+                </Border>
+                <TextBlock DockPanel.Dock="Top" Text="Log in and open your chat room here, then Start Bot →"
+                           Foreground="#606080" FontSize="9" Margin="2,0,0,4"/>
+                <wv2:WebView2 x:Name="ImvuWebView" />
+            </DockPanel>
+        </Border>
+
+        <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch"
+                      Background="#2A2A45" ShowsPreview="True"/>
+
+        <!-- Right: bot panel -->
+        <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="5"/>
+                <RowDefinition Height="180" MinHeight="72"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header + main controls -->
+            <Border Grid.Row="0" Background="#252540" CornerRadius="6" Padding="8" Margin="0,0,0,6">
+                <StackPanel>
+                    <TextBlock Text="IMVU Companion" Foreground="#E8E8FF" FontSize="14" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="StatusText" Text="Loading IMVU…" Foreground="#A0A0C8" FontSize="10"
+                               Margin="0,4,0,6" TextWrapping="Wrap"/>
+                    <WrapPanel>
+                        <Button x:Name="BotToggleBtn" Content="Start Bot" Style="{StaticResource Win11BotToggleButton}"
+                                Click="BotToggleBtn_Click" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                        <Button Content="Send Test" Click="SendTestReply_Click" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                        <Button Content="Inspect" Click="InspectChatDom_Click" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="AppLanguageCombo" Style="{StaticResource Win11ComboBoxButton}"
+                                  Width="110" Height="28"
+                                  SelectionChanged="AppLanguageCombo_SelectionChanged" VerticalAlignment="Center">
+                            <ComboBoxItem Content="English" Tag="en"/>
+                            <ComboBoxItem Content="Русский" Tag="ru"/>
+                        </ComboBox>
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- Settings (scrollable) -->
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,0,6">
+                <StackPanel>
+                    <Expander Header="Message Templates" IsExpanded="False" Margin="0,0,0,6"
+                              Background="#1E1E32" Foreground="#E0E0FF">
+                        <StackPanel Margin="4">
+                            <TextBlock Text="Welcome Whisper" FontSize="10" Foreground="#A0A0C8" Margin="0,0,0,4"/>
+                            <WrapPanel Margin="0,0,0,4">
+                                <ComboBox x:Name="WelcomeExtraModeCombo" Width="120" Height="26"
+                                          SelectionChanged="WelcomeExtraModeCombo_SelectionChanged">
+                                    <ComboBoxItem Content="No Extra" Tag="none" IsSelected="True"/>
+                                    <ComboBoxItem Content="Send Extra" Tag="send"/>
+                                </ComboBox>
+                                <ComboBox x:Name="WelcomeExtraDeliveryCombo" Width="100" Height="26" Margin="6,0,0,0"
+                                          Visibility="Collapsed" SelectionChanged="WelcomeExtraDeliveryCombo_SelectionChanged">
+                                    <ComboBoxItem Content="Whisper" Tag="whisper" IsSelected="True"/>
+                                    <ComboBoxItem Content="Public" Tag="public"/>
+                                </ComboBox>
+                            </WrapPanel>
+                            <TextBox x:Name="WelcomeExtraMessageBox" Height="26" Margin="0,0,0,6"
+                                     Visibility="Collapsed" Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"
+                                     LostFocus="WelcomeExtraMessageBox_LostFocus"
+                                     ToolTip="Extra message after welcome. Use {name} for joiner name."/>
+                            <WrapPanel Margin="0,0,0,4">
+                                <ComboBox x:Name="EventCombo" Width="120" Height="26" SelectionChanged="EventCombo_SelectionChanged"/>
+                                <Button Content="Add" Click="AddMessage_Click" Margin="6,0,0,0"/>
+                                <Button Content="Delete" Click="RemoveMessage_Click" Margin="4,0,0,0"/>
+                                <Button Content="Save" Click="SaveMessages_Click" Margin="4,0,0,0"/>
+                            </WrapPanel>
+                            <WrapPanel Margin="0,0,0,4">
+                                <TextBlock Text="Event:" VerticalAlignment="Center" FontSize="10" Foreground="#A0A0C8" Margin="0,0,6,0"/>
+                                <TextBox x:Name="EventNameEditBox" Width="120" Height="26" Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"/>
+                                <Button Content="Rename" Click="RenameEvent_Click" Margin="6,0,0,0"/>
+                                <TextBox x:Name="NewEventTextBox" Width="90" Height="26" Margin="6,0,0,0" Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"/>
+                                <Button Content="+ Event" Click="AddEvent_Click" Margin="4,0,0,0"/>
+                            </WrapPanel>
+                            <Grid Margin="0,0,0,4">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="56" MinHeight="28"/>
+                                    <RowDefinition Height="4"/>
+                                </Grid.RowDefinitions>
+                                <ListBox x:Name="MessagesList" Grid.Row="0"
+                                         SelectionChanged="MessagesList_SelectionChanged"
+                                         Background="#141428" Foreground="#C0C0E0" BorderBrush="#3A3A58"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+                                <GridSplitter Grid.Row="1" Height="4" HorizontalAlignment="Stretch"
+                                              Background="#2A2A45" ResizeDirection="Rows" ShowsPreview="True"/>
+                            </Grid>
+                            <WrapPanel Margin="0,6,0,0">
+                                <TextBox x:Name="MessageEditBox" Width="220" Height="26" Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"/>
+                                <Button Content="Update" Click="UpdateMessage_Click" Margin="6,0,0,0"/>
+                            </WrapPanel>
+                            <TextBlock Text="Random greeting per join. Use {name}." FontSize="9" Foreground="#707090" Margin="0,4,0,0"/>
+                        </StackPanel>
+                    </Expander>
+
+                    <Expander Header="!Commands" IsExpanded="False" Margin="0,0,0,6"
+                              Background="#1E1E32" Foreground="#E0E0FF">
+                        <StackPanel Margin="4">
+                            <WrapPanel Margin="0,0,0,4">
+                                <ComboBox x:Name="CommandCategoryCombo" Width="120" Height="26" SelectionChanged="CommandCategoryCombo_SelectionChanged"/>
+                                <Button Content="Add" Click="AddCommand_Click" Margin="6,0,0,0"/>
+                                <Button Content="Delete" Click="RemoveCommand_Click" Margin="4,0,0,0"/>
+                                <Button Content="Save" Click="SaveCommands_Click" Margin="4,0,0,0"/>
+                            </WrapPanel>
+                            <WrapPanel Margin="0,0,0,4">
+                                <TextBlock Text="Category:" VerticalAlignment="Center" FontSize="10" Foreground="#A0A0C8" Margin="0,0,6,0"/>
+                                <TextBox x:Name="CategoryNameEditBox" Width="120" Height="26" Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"/>
+                                <Button Content="Rename" Click="RenameCategory_Click" Margin="6,0,0,0"/>
+                                <TextBox x:Name="NewCategoryTextBox" Width="90" Height="26" Margin="6,0,0,0" Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"/>
+                                <Button Content="+ Category" Click="AddCategory_Click" Margin="4,0,0,0"/>
+                            </WrapPanel>
+                            <Grid Margin="0,0,0,4">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="56" MinHeight="28"/>
+                                    <RowDefinition Height="4"/>
+                                </Grid.RowDefinitions>
+                                <ListBox x:Name="CommandsList" Grid.Row="0"
+                                         SelectionChanged="CommandsList_SelectionChanged"
+                                         Background="#141428" Foreground="#C0C0E0" BorderBrush="#3A3A58"
+                                         DisplayMemberPath="Display"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+                                <GridSplitter Grid.Row="1" Height="4" HorizontalAlignment="Stretch"
+                                              Background="#2A2A45" ResizeDirection="Rows" ShowsPreview="True"/>
+                            </Grid>
+                            <WrapPanel Margin="0,6,0,0">
+                                <TextBox x:Name="CommandEditBox" Width="80" Height="26" Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"/>
+                                <TextBox x:Name="CommandResponseEditBox" Width="170" Height="26" Margin="6,0,0,0" Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"/>
+                                <Button Content="Update" Click="UpdateCommand_Click" Margin="6,0,0,0"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Expander>
+
+                    <Expander Header="AI Providers" IsExpanded="False" Margin="0,0,0,6"
+                              Background="#1E1E32" Foreground="#E0E0FF">
+                        <StackPanel Margin="4">
+                            <TextBlock Text="Bot Display Name (your IMVU chat name — prevents echo loops):"
+                                       FontSize="9" Foreground="#A0A0C8" Margin="0,0,0,2"/>
+                            <TextBox x:Name="BotDisplayNameBox" Height="26" Margin="0,0,0,6"
+                                     Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"
+                                     LostFocus="BotDisplayNameBox_LostFocus"
+                                     ToolTip="Must match your IMVU name shown in chat (.cs2-name)"/>
+                            <WrapPanel Margin="0,0,0,4">
+                                <ComboBox x:Name="AiProviderCombo" Style="{StaticResource Win11ComboBoxButton}"
+                                          Width="130" Height="26"
+                                          SelectionChanged="AiProviderCombo_SelectionChanged"/>
+                                <Button Content="Save" Click="SaveAiSettings_Click" Margin="8,0,0,0"/>
+                            </WrapPanel>
+                            <StackPanel x:Name="AiProviderFieldsPanel" Margin="0,2,0,0"/>
+                            <TextBlock x:Name="AiProviderStatusText" FontSize="9" Foreground="#707090"
+                                       TextWrapping="Wrap" Margin="0,4,0,0"/>
+                            <TextBlock Text="!bbot triggers AI (maintenance reply until connected). Case-insensitive."
+                                       FontSize="9" Foreground="#707090" Margin="0,4,0,0"/>
+                        </StackPanel>
+                    </Expander>
+                </StackPanel>
+            </ScrollViewer>
+
+            <GridSplitter Grid.Row="2" Height="5" HorizontalAlignment="Stretch"
+                          Background="#2A2A45" ResizeDirection="Rows" ShowsPreview="True"/>
+
+            <!-- Activity log (resizable height) -->
+            <DockPanel Grid.Row="3" LastChildFill="True" Margin="0,0,0,6">
+                <TextBlock DockPanel.Dock="Top" Text="Activity log" Foreground="#8080A8" FontSize="9" Margin="0,0,0,2"/>
+                <Border Background="#141428" CornerRadius="4" BorderBrush="#2A2A45" BorderThickness="1">
+                    <RichTextBox x:Name="LogBox" IsReadOnly="True" FontFamily="Consolas" FontSize="10"
+                                 Background="Transparent" BorderThickness="0" Foreground="#C0C0E0"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
+                </Border>
+            </DockPanel>
+
+            <StackPanel Grid.Row="4" Orientation="Horizontal">
+                <Button Content="Exit" Click="ExitButton_Click"/>
+                <TextBlock x:Name="AliveText" Text="" Foreground="#505070" FontSize="9"
+                           VerticalAlignment="Center" Margin="12,0,0,0"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
