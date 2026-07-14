@@ -214,7 +214,7 @@ public partial class MainWindow : Window
             File.AppendAllText(@"C:\Users\serve\imvu_companion_crash.log", $"[{DateTime.Now}] LOADED: Web structured DOM (no Classic :/name:text) + internal profile launch for simple no-relogin. Event only. Cleanup done.\n\n");
 
             _aliveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            _aliveTimer.Tick += (s, args) => { try { if (AliveText != null) AliveText.Text = DateTime.Now.ToString("HH:mm:ss"); } catch { } };
+            _aliveTimer.Tick += (s, args) => { try { if (AliveText != null) AliveText.Text = DateTime.Now.ToString("MM/dd/yyyy - HH:mm:ss"); } catch { } };
             _aliveTimer.Start();
 
             _robustHeartbeatTimer = new System.Timers.Timer(1500);
@@ -262,7 +262,8 @@ public partial class MainWindow : Window
 
             InitAiProvidersUi();
 
-            AppendLog("v4.5: Join whisper — scoped menu, visible compose, uid trust.", LogCategory.Info);
+            AppendLog("v0.7: Embedded chat bot with auto-update.", LogCategory.Info);
+            InitAutoUpdateUi();
 
             _ = InitWebViewAsync();
         }
@@ -1032,38 +1033,12 @@ public partial class MainWindow : Window
         }
     }
 
-    private DispatcherTimer? _botGlowTimer;
-    private RotateTransform? _botGlowRotate;
-    private double _botGlowAngle;
+    private ButtonGlowAnimator? _botGlowAnimator;
 
     private void UpdateBotToggleGlow(bool running)
     {
         if (BotToggleBtn == null) return;
-        BotToggleBtn.ApplyTemplate();
-        _botGlowRotate ??= BotToggleBtn.Template.FindName("BotGlowRotate", BotToggleBtn) as RotateTransform;
-        var glowRing = BotToggleBtn.Template.FindName("GlowRing", BotToggleBtn) as UIElement;
-
-        if (running)
-        {
-            if (glowRing != null) glowRing.Visibility = Visibility.Visible;
-            _botGlowTimer?.Stop();
-            _botGlowTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };
-            _botGlowTimer.Tick += (_, _) =>
-            {
-                if (_botGlowRotate == null) return;
-                _botGlowAngle = (_botGlowAngle + 6) % 360;
-                _botGlowRotate.Angle = _botGlowAngle;
-            };
-            _botGlowTimer.Start();
-        }
-        else
-        {
-            _botGlowTimer?.Stop();
-            _botGlowTimer = null;
-            if (glowRing != null) glowRing.Visibility = Visibility.Collapsed;
-            if (_botGlowRotate != null) _botGlowRotate.Angle = 0;
-            _botGlowAngle = 0;
-        }
+        (_botGlowAnimator ??= new ButtonGlowAnimator(BotToggleBtn)).SetActive(running);
     }
 
     private void SaveWelcomeExtraMessageForCurrentLang()
@@ -2637,7 +2612,8 @@ return hints.length ? hints.join(' || ') : 'no recent command/whisper rows';
         SaveMessages(); // persist any unsaved template changes
         SaveCommands();
         StopChatQueue();
-        _botGlowTimer?.Stop();
+        _botGlowAnimator?.Stop();
+        StopUpdateTimers();
         _aliveTimer?.Stop(); _robustHeartbeatTimer?.Stop(); _botCts?.Cancel();
         base.OnClosed(e);
     }

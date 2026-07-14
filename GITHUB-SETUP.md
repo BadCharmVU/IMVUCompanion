@@ -58,7 +58,7 @@ git add .
 git status
 # Confirm ai_settings.json and bin/ are NOT listed (blocked by .gitignore)
 
-git commit -m "Initial commit: IMVU Companion v4.5"
+git commit -m "Initial commit: IMVU Companion v0.7"
 git branch -M main
 git remote add origin https://github.com/YOUR_USERNAME/IMVUCompanion.git
 git push -u origin main
@@ -94,7 +94,7 @@ git pull
 # ... work with Grok ...
 git add -A
 git status
-git commit -m "v4.6: describe what changed"
+git commit -m "v0.8: describe what changed"
 git push
 ```
 
@@ -121,6 +121,30 @@ git commit -m "Add bot message templates"
 ```
 
 The app loads these from the **exe folder** at runtime; after clone you still copy or symlink them into `bin\Release\...\` after build, or we can later change the app to load from project root.
+
+---
+
+## Publishing updates (for testers)
+
+The app checks `version.json` on GitHub at startup and every 4 hours.
+
+**When you release a new version:**
+
+1. Bump version in `IMVUCompanion.csproj` (`<Version>0.8.0</Version>`)
+2. Update `version.json` in repo root (same version + `downloadUrl` pointing to the release asset)
+3. Build publishable exe:
+   ```powershell
+   dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+   ```
+   Output: `bin\Release\net8.0-windows10.0.19041.0\win-x64\publish\IMVUCompanion.exe`
+4. GitHub → **Releases** → **Draft new release** → tag `v0.8.0` → attach `IMVUCompanion.exe`
+5. Copy the asset download URL into `version.json` → commit → push
+
+**Tester experience:**
+- Button shows `v0.7 - Up To Date` when current (always visible for now)
+- When newer version exists: animated border + `v0.7 → v0.8 Update` — one click downloads, replaces exe, restarts
+
+Share install link: `https://github.com/BadCharmVU/IMVUCompanion/releases/latest`
 
 ---
 

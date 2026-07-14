@@ -1,6 +1,6 @@
 # IMVU Companion — Join Whisper Progress (paused)
 
-**Last version:** v4.5  
+**Last version:** v0.7
 **Build:** `dotnet build C:\Users\serve\ansel\IMVUCompanion\IMVUCompanion.csproj -c Release`  
 **Run:** `C:\Users\serve\ansel\IMVUCompanion\bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe`  
 **Status:** Join greet (public) works. Proactive join whisper still fails (opens self or blocked as `target-is-bot`).
