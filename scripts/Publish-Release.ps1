@@ -11,17 +11,24 @@ Write-Host "==> Building icon.ico from icon.png"
 
 Write-Host "==> Publishing self-contained win-x64 app"
 $publishDir = Join-Path $ProjectRoot "publish"
-if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
+if (Test-Path $publishDir) {
+    try {
+        Remove-Item $publishDir -Recurse -Force
+    } catch {
+        $publishDir = Join-Path $ProjectRoot ("publish.{0:yyyyMMddHHmmss}" -f (Get-Date))
+        Write-Host "Publish folder locked - using $publishDir"
+    }
+}
 
 dotnet publish "$ProjectRoot\IMVUCompanion.csproj" -c Release -r win-x64 --self-contained true `
+    -o $publishDir `
     /p:PublishReadyToRun=true `
     /p:DebugType=None `
     /p:DebugSymbols=false
 
-$built = Join-Path $ProjectRoot "bin\Release\net8.0-windows10.0.19041.0\win-x64\publish"
-if (-not (Test-Path $built)) { throw "Publish output not found: $built" }
-
-Copy-Item $built $publishDir -Recurse -Force
+if (-not (Test-Path (Join-Path $publishDir "IMVUCompanion.exe"))) {
+    throw "Publish output not found: $publishDir"
+}
 Write-Host "==> Published to $publishDir"
 
 if ($SkipInstaller) { return }
@@ -40,7 +47,16 @@ if (-not $iscc) {
 
 $releaseDir = Join-Path $ProjectRoot "release"
 New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
-& $iscc (Join-Path $ProjectRoot "installer\IMVUCompanion.iss")
+$publishRel = (Resolve-Path $publishDir).Path
+$publishRel = $publishRel.Substring($ProjectRoot.Length).TrimStart('\')
+$publishDefine = "..\$publishRel"
+$setup = Join-Path $releaseDir "IMVUCompanion-Setup-v0.7.0.exe"
+if (Test-Path $setup) {
+    try { Remove-Item $setup -Force } catch {
+        Rename-Item $setup ($setup + ".old") -Force
+    }
+}
+& $iscc "/DPublishDir=$publishDefine" (Join-Path $ProjectRoot "installer\IMVUCompanion.iss")
 $setup = Join-Path $releaseDir "IMVUCompanion-Setup-v0.7.0.exe"
 if (Test-Path $setup) {
     Write-Host "==> Installer ready: $setup"
