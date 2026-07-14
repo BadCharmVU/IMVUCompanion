@@ -56,7 +56,8 @@ if (Test-Path $setup) {
         Rename-Item $setup ($setup + ".old") -Force
     }
 }
-& $iscc "/DPublishDir=$publishDefine" (Join-Path $ProjectRoot "installer\IMVUCompanion.iss")
+$iss = Join-Path $ProjectRoot "installer\IMVUCompanion.iss"
+& $iscc "/O$releaseDir" "/DPublishDir=$publishDefine" $iss
 $setup = Join-Path $releaseDir "IMVUCompanion-Setup-v0.7.0.exe"
 if (Test-Path $setup) {
     Write-Host "==> Installer ready: $setup"
