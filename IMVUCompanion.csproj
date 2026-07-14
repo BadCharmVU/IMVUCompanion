@@ -23,7 +23,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Resource Include="icon.ico" />
     <Content Include="icon.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="icon.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
