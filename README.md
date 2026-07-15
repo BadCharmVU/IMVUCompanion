@@ -79,7 +79,7 @@ cd C:\Users\serve\ansel\IMVUCompanion
 
 Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php). Output: `release\IMVUCompanion-Setup-vX.Y.Z.exe`
 
-Then on GitHub: new tag, upload the `.exe`, update `version.json` on `main` for auto-update.
+Then: update `version.json`, run `.\scripts\Update-VersionGist.ps1` (public update check), upload the `.exe` to GitHub Release or Gumroad.
 
 Test the installer on your **other PC** — that machine does not need the source repo.
 

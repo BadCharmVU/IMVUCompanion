@@ -5,7 +5,7 @@ namespace IMVUCompanion;
 internal static class AppVersion
 {
     public const string VersionCheckUrl =
-        "https://raw.githubusercontent.com/BadCharmVU/IMVUCompanion/main/version.json";
+        "https://gist.githubusercontent.com/BadCharmVU/d510193765f2062f315d65de91bbceec/raw/version.json";
 
     public const string ReleasesApiUrl =
         "https://api.github.com/repos/BadCharmVU/IMVUCompanion/releases/latest";
