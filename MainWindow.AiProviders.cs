@@ -23,6 +23,8 @@ public partial class MainWindow
     private readonly Dictionary<string, FrameworkElement> _aiDynamicFields = new(StringComparer.OrdinalIgnoreCase);
     private AiSettings _aiSettings = new();
     private string _botDisplayName = "";
+    private string? _aiFieldsBoundProvider;
+    private bool _aiProviderUiSyncing;
 
     private sealed class ProviderConfig
     {
@@ -120,23 +122,32 @@ public partial class MainWindow
 
         LoadAiSettings();
 
-        string selected = _aiSettings.SelectedProvider;
-        for (int i = 0; i < AiProviderCombo.Items.Count; i++)
+        _aiProviderUiSyncing = true;
+        try
         {
-            if (AiProviderCombo.Items[i] is ComboBoxItem cbi &&
-                string.Equals(cbi.Tag?.ToString(), selected, StringComparison.OrdinalIgnoreCase))
+            string selected = _aiSettings.SelectedProvider;
+            for (int i = 0; i < AiProviderCombo.Items.Count; i++)
             {
-                AiProviderCombo.SelectedIndex = i;
-                break;
+                if (AiProviderCombo.Items[i] is ComboBoxItem cbi &&
+                    string.Equals(cbi.Tag?.ToString(), selected, StringComparison.OrdinalIgnoreCase))
+                {
+                    AiProviderCombo.SelectedIndex = i;
+                    break;
+                }
             }
+            if (AiProviderCombo.SelectedIndex < 0 && AiProviderCombo.Items.Count > 0)
+                AiProviderCombo.SelectedIndex = 0;
         }
-        if (AiProviderCombo.SelectedIndex < 0 && AiProviderCombo.Items.Count > 0)
-            AiProviderCombo.SelectedIndex = 0;
+        finally
+        {
+            _aiProviderUiSyncing = false;
+        }
 
         if (BotDisplayNameBox != null)
             BotDisplayNameBox.Text = _aiSettings.BotDisplayName;
 
         _botDisplayName = _aiSettings.BotDisplayName?.Trim() ?? "";
+        _aiFieldsBoundProvider = GetSelectedAiProviderName();
         RebuildAiProviderFields();
     }
 
@@ -169,7 +180,7 @@ public partial class MainWindow
     {
         try
         {
-            FlushAiFieldsToSettings();
+            FlushAiFieldsToSettings(_aiFieldsBoundProvider);
             if (BotDisplayNameBox != null)
                 _aiSettings.BotDisplayName = BotDisplayNameBox.Text.Trim();
             _botDisplayName = _aiSettings.BotDisplayName;
@@ -198,9 +209,9 @@ public partial class MainWindow
         return cfg;
     }
 
-    private void FlushAiFieldsToSettings()
+    private void FlushAiFieldsToSettings(string? providerName = null)
     {
-        string? name = GetSelectedAiProviderName();
+        string? name = providerName ?? _aiFieldsBoundProvider ?? GetSelectedAiProviderName();
         if (string.IsNullOrEmpty(name)) return;
 
         var cfg = GetOrCreateProviderConfig(name);
@@ -224,12 +235,11 @@ public partial class MainWindow
     {
         if (AiProviderFieldsPanel == null) return;
 
-        FlushAiFieldsToSettings();
-
         string? name = GetSelectedAiProviderName();
         if (string.IsNullOrEmpty(name)) return;
 
         _aiSettings.SelectedProvider = name;
+        _aiFieldsBoundProvider = name;
         var cfg = GetOrCreateProviderConfig(name);
 
         AiProviderFieldsPanel.Children.Clear();
@@ -336,7 +346,10 @@ public partial class MainWindow
 
     private void AiProviderCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!IsLoaded || AiProviderFieldsPanel == null) return;
+        if (_aiProviderUiSyncing || !IsLoaded || AiProviderFieldsPanel == null) return;
+
+        // Save fields to the provider we're leaving before loading the new one
+        FlushAiFieldsToSettings(_aiFieldsBoundProvider);
         RebuildAiProviderFields();
     }
 

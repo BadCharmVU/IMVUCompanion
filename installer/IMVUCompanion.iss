@@ -1,6 +1,6 @@
 ; Inno Setup script — compile with ISCC.exe after running scripts/Publish-Release.ps1
 
-#define AppVersion "0.7.1"
+#define AppVersion "0.8.0"
 #ifndef PublishDir
 #define PublishDir "..\publish"
 #endif

@@ -30,6 +30,9 @@ public enum LogCategory
     Join,
     Command,
     Sent,
+    Skipped,
+    Trigger,
+    Whisper,
     Warning,
     Error
 }
@@ -137,7 +140,10 @@ public partial class MainWindow : Window
 
     private bool _botRunning = false;
     private readonly HashSet<string> _seenLines = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _greetedJoiners = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _greetedUserIds = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _joinSkipCounts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _uidDisplayNames = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _greetedJoinersByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _recentBotMessages = new(StringComparer.OrdinalIgnoreCase);
     private readonly Queue<string> _recentBotMessageOrder = new();
     private readonly SemaphoreSlim _chatSendLock = new(1, 1);
@@ -169,6 +175,22 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _botCts;
     private bool _exiting = false;
     private readonly DateTime _sessionStartedAt = DateTime.Now;
+    private DateTime? _botSessionStartedAt;
+    private int _sessionGreetedCount;
+    private bool _botSessionTimerRunning;
+    private TimeSpan _botSessionPausedElapsed;
+
+    private static readonly SolidColorBrush StatusUsersBrush = CreateFrozenBrush(0xCA, 0x8A, 0x04);
+    private static readonly SolidColorBrush StatusTimerBrush = CreateFrozenBrush(0x4A, 0xDE, 0x80);
+    private static readonly SolidColorBrush StatusClockBrush = CreateFrozenBrush(0xC0, 0xC0, 0xE0);
+    private static readonly SolidColorBrush StatusSeparatorBrush = CreateFrozenBrush(0xC0, 0xC0, 0xE0);
+
+    private static SolidColorBrush CreateFrozenBrush(byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
+    }
     // Message templates for events like Welcoming - user editable, random pick, {name} placeholder
     private Dictionary<string, Dictionary<string, List<string>>> _messageTemplates = new Dictionary<string, Dictionary<string, List<string>>>(StringComparer.OrdinalIgnoreCase);
     private readonly Random _random = new Random();
@@ -215,8 +237,9 @@ public partial class MainWindow : Window
             File.AppendAllText(@"C:\Users\serve\imvu_companion_crash.log", $"[{DateTime.Now}] LOADED: Web structured DOM (no Classic :/name:text) + internal profile launch for simple no-relogin. Event only. Cleanup done.\n\n");
 
             _aliveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            _aliveTimer.Tick += (s, args) => { try { if (AliveText != null) AliveText.Text = DateTime.Now.ToString("MM.dd.yyyy - HH:mm:ss"); } catch { } };
+            _aliveTimer.Tick += (s, args) => { try { UpdateStatusBar(); } catch { } };
             _aliveTimer.Start();
+            UpdateStatusBar();
 
             _robustHeartbeatTimer = new System.Timers.Timer(1500);
             _robustHeartbeatTimer.Elapsed += (s, args) => { try { File.AppendAllText(@"C:\Users\serve\imvu_companion_crash.log", $"[{DateTime.Now:HH:mm:ss}] ROBUST: alive\n"); } catch { } };
@@ -263,7 +286,7 @@ public partial class MainWindow : Window
 
             InitAiProvidersUi();
 
-            AppendLog($"{AppVersion.ShortLabel} — {_sessionStartedAt:MM.dd.yyyy - HH:mm:ss}", LogCategory.Info);
+            AppendLog($"{AppVersion.ShortLabel} — {_sessionStartedAt:MM.dd.yyyy - HH:mm:ss}", LogCategory.Info, toActivityLog: true);
             InitAutoUpdateUi();
 
             _ = InitWebViewAsync();
@@ -276,26 +299,104 @@ public partial class MainWindow : Window
         LogCategory.Join => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x4A, 0xDE, 0x80)),
         LogCategory.Command => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFA, 0xCC, 0x15)),
         LogCategory.Sent => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x7D, 0xD3, 0xFC)),
+        LogCategory.Skipped => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xCA, 0x8A, 0x04)),
+        LogCategory.Trigger => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xD5, 0xA5, 0x48)),
+        LogCategory.Whisper => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xA6, 0x7B, 0x5B)),
         LogCategory.Warning => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFB, 0x92, 0x3C)),
         LogCategory.Error => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xF8, 0x71, 0x71)),
         _ => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC0, 0xC0, 0xE0))
     };
 
-    private void AppendLog(string msg, LogCategory cat = LogCategory.Info)
+    private string BotLogName =>
+        string.IsNullOrWhiteSpace(_botDisplayName) ? "Bot" : _botDisplayName.Trim();
+
+    private void AppendActivityLog(string msg, LogCategory cat) => AppendLog(msg, cat, toActivityLog: true);
+
+    private void LogJoinSkipped(string name, int count) =>
+        AppendActivityLog($"[Skipped] {name} Joined again | {count}", LogCategory.Skipped);
+
+    private void LogCommandTrigger(string user, string command) =>
+        AppendActivityLog($"[Trigger] {user} used command {command}", LogCategory.Trigger);
+
+    private void AppendLog(string msg, LogCategory cat = LogCategory.Info, bool toActivityLog = false)
+    {
+        try
+        {
+            if (toActivityLog)
+            {
+                void writeUi()
+                {
+                    if (LogBox.Document == null) LogBox.Document = new FlowDocument { PagePadding = new Thickness(4) };
+                    var para = new Paragraph(new Run(msg) { Foreground = BrushForCategory(cat) }) { Margin = new Thickness(0), LineHeight = 14 };
+                    LogBox.Document.Blocks.Add(para);
+                    while (LogBox.Document.Blocks.Count > 400) LogBox.Document.Blocks.Remove(LogBox.Document.Blocks.FirstBlock);
+                    LogBox.ScrollToEnd();
+                }
+                if (Dispatcher.CheckAccess()) writeUi();
+                else Dispatcher.BeginInvoke(writeUi);
+            }
+            File.AppendAllText(@"C:\Users\serve\imvu_companion_crash.log", $"[{DateTime.Now:HH:mm:ss}] {msg}\n");
+        }
+        catch { }
+    }
+
+    private void ClearJoinSessionState()
+    {
+        _greetedUserIds.Clear();
+        _joinSkipCounts.Clear();
+        _uidDisplayNames.Clear();
+        _greetedJoinersByName.Clear();
+    }
+
+    private void ResetBotSessionStats()
+    {
+        _botSessionStartedAt = DateTime.Now;
+        _sessionGreetedCount = 0;
+        _botSessionTimerRunning = true;
+        _botSessionPausedElapsed = TimeSpan.Zero;
+        UpdateStatusBar();
+    }
+
+    private void PauseBotSessionTimer()
+    {
+        if (_botSessionStartedAt.HasValue && _botSessionTimerRunning)
+            _botSessionPausedElapsed = DateTime.Now - _botSessionStartedAt.Value;
+        _botSessionTimerRunning = false;
+        UpdateStatusBar();
+    }
+
+    private TimeSpan GetBotSessionElapsed()
+    {
+        if (!_botSessionStartedAt.HasValue) return TimeSpan.Zero;
+        if (_botSessionTimerRunning)
+            return DateTime.Now - _botSessionStartedAt.Value;
+        return _botSessionPausedElapsed;
+    }
+
+    private static string FormatSessionElapsed(TimeSpan elapsed) =>
+        $"{(int)elapsed.TotalHours:D2}:{elapsed.Minutes:D2}:{elapsed.Seconds:D2}";
+
+    private string GetSessionTimerText() => FormatSessionElapsed(GetBotSessionElapsed());
+
+    private string BuildSessionStatsMessage() =>
+        $"• IMVU Companion • Online for: {GetSessionTimerText()} • Greeted: {_sessionGreetedCount} Users •";
+
+    private void UpdateStatusBar()
     {
         try
         {
             void writeUi()
             {
-                if (LogBox.Document == null) LogBox.Document = new FlowDocument { PagePadding = new Thickness(4) };
-                var para = new Paragraph(new Run(msg) { Foreground = BrushForCategory(cat) }) { Margin = new Thickness(0), LineHeight = 14 };
-                LogBox.Document.Blocks.Add(para);
-                while (LogBox.Document.Blocks.Count > 400) LogBox.Document.Blocks.Remove(LogBox.Document.Blocks.FirstBlock);
-                LogBox.ScrollToEnd();
+                if (AliveText == null) return;
+                AliveText.Inlines.Clear();
+                AliveText.Inlines.Add(new Run(_sessionGreetedCount.ToString()) { Foreground = StatusUsersBrush });
+                AliveText.Inlines.Add(new Run(" - ") { Foreground = StatusSeparatorBrush });
+                AliveText.Inlines.Add(new Run(GetSessionTimerText()) { Foreground = StatusTimerBrush });
+                AliveText.Inlines.Add(new Run("   |   ") { Foreground = StatusSeparatorBrush });
+                AliveText.Inlines.Add(new Run(DateTime.Now.ToString("MM.dd.yyyy - HH:mm:ss")) { Foreground = StatusClockBrush });
             }
             if (Dispatcher.CheckAccess()) writeUi();
             else Dispatcher.BeginInvoke(writeUi);
-            File.AppendAllText(@"C:\Users\serve\imvu_companion_crash.log", $"[{DateTime.Now:HH:mm:ss}] {msg}\n");
         }
         catch { }
     }
@@ -771,7 +872,7 @@ public partial class MainWindow : Window
             if (rebindObserver)
             {
                 _seenLines.Clear();
-                _greetedJoiners.Clear();
+                ClearJoinSessionState();
                 await DiscoverElements();
                 await SetupChatObserver();
                 await InitialChatScan();
@@ -811,7 +912,8 @@ public partial class MainWindow : Window
             BotToggleBtn.Content = "Stop Bot";
             UpdateBotToggleGlow(true);
             _seenLines.Clear();
-            _greetedJoiners.Clear();
+            ResetBotSessionStats();
+            ClearJoinSessionState();
             _botCts = new CancellationTokenSource();
             StartChatQueue();
 
@@ -819,6 +921,7 @@ public partial class MainWindow : Window
             await SetupChatObserver();
             UpdatePageStatus();
             await InitialChatScan();
+            AppendActivityLog("[Bot] Started", LogCategory.Info);
         }
         catch (Exception ex)
         {
@@ -826,6 +929,7 @@ public partial class MainWindow : Window
             _botRunning = false;
             BotToggleBtn.Content = "Start Bot";
             UpdateBotToggleGlow(false);
+            PauseBotSessionTimer();
         }
         finally
         {
@@ -842,7 +946,8 @@ public partial class MainWindow : Window
         _botCts?.Cancel();
         StopChatQueue();
         _ = StopBotCleanupAsync();
-        AppendLog("Stopped.", LogCategory.Info);
+        PauseBotSessionTimer();
+        AppendActivityLog("[Bot] Stopped", LogCategory.Info);
         UpdatePageStatus();
     }
 
@@ -1720,6 +1825,7 @@ public partial class MainWindow : Window
         if (!IsWebViewReady) return;
         try
         {
+            await SeedGreetedFromExistingChatAsync();
             var ls = await GetChatLinesAsync(5);
             foreach (var l in ls) 
             {
@@ -1727,11 +1833,9 @@ public partial class MainWindow : Window
                 string sp = parts.Length > 1 ? parts[0] : "";
                 string m = parts.Length > 1 ? parts[1] : l;
                 if (!_seenLines.Add(l)) continue;
-                // Seed dedup sets from history — do not greet users already in chat when bot starts
-                if (TryResolveJoiner(sp, m, out string histJoiner))
-                    _greetedJoiners.Add(histJoiner);
-                else
-                    EnqueueChatLine(sp, m);
+                if (ContainsJoinLine(m))
+                    continue;
+                EnqueueChatLine(sp, m);
             }
             AppendLog("Initial done (structured web DOM, no : ). found " + ls.Length + " msgs");
         }
@@ -1779,12 +1883,14 @@ public partial class MainWindow : Window
     {
         joiner = "";
         if (string.IsNullOrWhiteSpace(msg)) return false;
-        string line = Regex.Replace(msg.Trim(), @"\s+", " ");
-        foreach (var rx in JoinNamePatterns)
+        foreach (string rawLine in msg.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
         {
-            var m = rx.Match(line);
-            if (m.Success)
+            string line = Regex.Replace(rawLine.Trim(), @"\s+", " ");
+            if (!IsJoinLine(line)) continue;
+            foreach (var rx in JoinNamePatterns)
             {
+                var m = rx.Match(line);
+                if (!m.Success) continue;
                 joiner = SanitizeJoinerName(m.Groups[1].Value);
                 if (!string.IsNullOrEmpty(joiner)) return true;
             }
@@ -1795,14 +1901,18 @@ public partial class MainWindow : Window
     private static bool TryResolveJoiner(string speaker, string msg, out string joiner)
     {
         joiner = "";
-        if (!IsJoinLine(msg)) return false;
-        if (TryParseJoinerName(msg, out joiner) && !string.IsNullOrWhiteSpace(joiner))
-            return true;
-        joiner = SanitizeJoinerName(speaker);
-        if (!string.IsNullOrEmpty(joiner) &&
-            !joiner.Equals("user", StringComparison.OrdinalIgnoreCase))
-            return true;
-        joiner = "";
+        if (!ContainsJoinLine(msg)) return false;
+        return TryParseJoinerName(msg, out joiner) && !string.IsNullOrWhiteSpace(joiner);
+    }
+
+    private static bool ContainsJoinLine(string msg)
+    {
+        if (string.IsNullOrWhiteSpace(msg)) return false;
+        if (IsJoinLine(msg)) return true;
+        foreach (string rawLine in msg.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (IsJoinLine(rawLine)) return true;
+        }
         return false;
     }
 
@@ -1954,7 +2064,7 @@ public partial class MainWindow : Window
             if (IsBotOwnMessage(speaker, msg)) return;
 
             // Greet on join — name from join text, avatar alt, or speaker column; each user once per session
-            if (IsJoinLine(msg))
+            if (ContainsJoinLine(msg))
             {
                 if (!TryResolveJoiner(speaker, msg, out string joiner) || string.IsNullOrWhiteSpace(joiner))
                 {
@@ -1983,7 +2093,15 @@ public partial class MainWindow : Window
                 TryParseBbotCommand(msg, out string aiPrompt);
                 string promptLog = string.IsNullOrEmpty(aiPrompt) ? "(no message)" : aiPrompt;
                 AppendLog($"[AI{wTag}] {sp}: !bbot {promptLog}", LogCategory.Command);
+                LogCommandTrigger(sp, firstCmd);
                 await SendToImvuChat(AiMaintenanceReply, isWhisper, whisperRowRef, sp, firstCmd, ct: ct);
+                return;
+            }
+
+            if (string.Equals(firstCmd, "!stats", StringComparison.OrdinalIgnoreCase))
+            {
+                LogCommandTrigger(sp, firstCmd);
+                await SendToImvuChat(BuildSessionStatsMessage(), isWhisper, whisperRowRef, sp, firstCmd, ct: ct);
                 return;
             }
 
@@ -1991,7 +2109,7 @@ public partial class MainWindow : Window
             {
                 if (!CommandMatchesFirstToken(msg, kv.Key)) continue;
                 string r = isWhisper ? kv.Value : sp + " " + kv.Value;
-                AppendLog($"[CMD{wTag}] {sp}: {firstCmd} → {r}", LogCategory.Command);
+                LogCommandTrigger(sp, firstCmd);
                 await SendToImvuChat(r, isWhisper, whisperRowRef, sp, firstCmd, ct: ct);
                 return;
             }
@@ -2001,33 +2119,53 @@ public partial class MainWindow : Window
 
     private async Task HandleJoinGreetAsync(string joiner, string whisperRowRef, string joinUserId = "", CancellationToken ct = default)
     {
-        if (!_greetedJoiners.Add(joiner))
+        string uidLabel = string.IsNullOrWhiteSpace(joinUserId) ? "?" : joinUserId;
+        AppendActivityLog($"[JOIN] uId={uidLabel}: {joiner} | Joined the chat", LogCategory.Join);
+
+        if (!string.IsNullOrWhiteSpace(joinUserId))
+            _uidDisplayNames[joinUserId] = joiner;
+
+        if (!string.IsNullOrWhiteSpace(joinUserId))
         {
-            AppendLog($"[JOIN skip] already greeted: {joiner}", LogCategory.Info);
+            if (!_greetedUserIds.Add(joinUserId))
+            {
+                _joinSkipCounts.TryGetValue(joinUserId, out int count);
+                count++;
+                _joinSkipCounts[joinUserId] = count;
+                string name = _uidDisplayNames.GetValueOrDefault(joinUserId, joiner);
+                LogJoinSkipped(name, count);
+                return;
+            }
+        }
+        else if (!_greetedJoinersByName.Add(joiner))
+        {
+            string nameKey = "name:" + joiner.ToLowerInvariant();
+            _joinSkipCounts.TryGetValue(nameKey, out int count);
+            count++;
+            _joinSkipCounts[nameKey] = count;
+            LogJoinSkipped(joiner, count);
             return;
         }
+
         var templates = GetCurrentTemplates(_joinEvent);
         string template = templates.Count > 0 ? templates[_random.Next(templates.Count)] : "Welcome {name}!";
         string greet = template.Replace("{name}", joiner);
-        AppendLog($"[JOIN] {joiner} → {greet} (in {JoinGreetDelayMs}ms)", LogCategory.Join);
         await Task.Delay(JoinGreetDelayMs, ct);
         if (!IsBotActive) return;
         await SendToImvuChat(greet, ct: ct);
+        _sessionGreetedCount++;
+        UpdateStatusBar();
 
         if (!_welcomeExtra.SendExtra || !IsBotActive) return;
         string extraTemplate = GetWelcomeExtraMessage();
         if (string.IsNullOrWhiteSpace(extraTemplate)) return;
 
         string extra = extraTemplate.Replace("{name}", joiner);
-        string mode = _welcomeExtra.AsWhisper ? "whisper" : "public";
-        AppendLog($"[JOIN extra] {joiner} → {extra} ({mode}, in {JoinGreetDelayMs}ms)", LogCategory.Join);
         await Task.Delay(JoinGreetDelayMs, ct);
         if (!IsBotActive) return;
         if (_welcomeExtra.AsWhisper)
         {
-            if (string.IsNullOrWhiteSpace(whisperRowRef) && string.IsNullOrWhiteSpace(joinUserId))
-                AppendLog("[JOIN extra] whisper skipped — no join row ref or user id", LogCategory.Warning);
-            else
+            if (!string.IsNullOrWhiteSpace(whisperRowRef) || !string.IsNullOrWhiteSpace(joinUserId))
                 await SendToImvuChat(extra, whisperReply: true, whisperRowRef: whisperRowRef,
                     whisperSpeaker: joiner, proactiveWhisperToUser: true, joinUserId: joinUserId, ct: ct);
         }
@@ -2037,14 +2175,14 @@ public partial class MainWindow : Window
 
     private async Task SendToImvuChat(string t, bool whisperReply = false, string whisperRowRef = "",
         string? whisperSpeaker = null, string? whisperCmd = null, bool proactiveWhisperToUser = false,
-        string? joinUserId = null, CancellationToken ct = default)
+        string? joinUserId = null, bool requireBotActive = true, CancellationToken ct = default)
     {
         if (!IsWebViewReady)
         {
             AppendLog("IMVU browser not ready.", LogCategory.Warning);
             return;
         }
-        if (!IsBotActive) return;
+        if (requireBotActive && !IsBotActive) return;
         try
         {
             await _chatSendLock.WaitAsync(ct);
@@ -2052,7 +2190,7 @@ public partial class MainWindow : Window
         catch (OperationCanceledException) { return; }
         try
         {
-            if (!IsBotActive) return;
+            if (requireBotActive && !IsBotActive) return;
             string? result = await SendToImvuChatViaWebView(t, whisperReply, whisperRowRef, whisperSpeaker, whisperCmd, proactiveWhisperToUser, joinUserId, ct);
             if (whisperReply && result != "ok")
                 AppendLog("Whisper send issue: " + (result ?? "unknown"), LogCategory.Warning);
@@ -2442,7 +2580,7 @@ return child ? 'input found: ' + child.tagName : 'input-container has no editabl
             Thread.Sleep(8);
             PostMessage(hwnd, WM_KEYUP, new IntPtr(VK_RETURN), IntPtr.Zero);
 
-            AppendLog("Sent (native): " + text);
+            AppendActivityLog($"[Sent] {text}", LogCategory.Sent);
         }
         catch (Exception ex) { AppendLog("Native send err: " + ex.Message); }
     }
@@ -2540,61 +2678,10 @@ return results.slice(-maxLines);
         catch { return Array.Empty<string>(); }
     }
 
-    private async void InspectChatDom_Click(object sender, RoutedEventArgs e)
-    {
-        if (!IsWebViewReady)
-        {
-            AppendLog("IMVU still loading…", LogCategory.Warning);
-            return;
-        }
-        try
-        {
-            AppendLog("=== DOM inspect ===", LogCategory.Info);
-            var chatInspect = await RunJsStringAsync(FindChatRootJs + """
-const r = __imvuFindChatRoot();
-if (!r.hasStream) return 'NO chat-stream2 (checked iframes)';
-const c = r.cont;
-let out = 'tag=' + c.tagName + ' rows~' + c.children.length;
-const cs2 = Array.from(c.querySelectorAll('.cs2-name')).slice(0,3).map(e => (e.textContent||'').trim());
-if (cs2.length) out += ' | names: ' + cs2.join(', ');
-return out;
-""", logErrors: true);
-            AppendLog("Chat: " + (chatInspect ?? "?"), LogCategory.Info);
-
-            var inputInspect = await RunJsStringAsync(FindChatRootJs + """
-const r = __imvuFindChatRoot();
-if (!r.hasInput) return 'NO input-container (checked iframes)';
-const ic = r.doc.querySelector('div.input-container, [class*="input-container"]');
-const e = ic?.querySelector('input, textarea, [contenteditable]');
-return e ? 'input OK: ' + e.tagName : 'no editable child';
-""", logErrors: true);
-            AppendLog("Input: " + (inputInspect ?? "?"), LogCategory.Info);
-
-            var whisperInspect = await RunJsStringAsync(FindChatRootJs + """
-const r = __imvuFindChatRoot();
-const rows = r.cont.querySelectorAll('[class*="msg"], [class*="message"], [class*="chat-line"], li');
-const hints = [];
-for (let i = rows.length - 1; i >= Math.max(0, rows.length - 8); i--) {
-    const row = rows[i];
-    const txt = (row.innerText || '').trim().split(/[\n\r]+/)[0].slice(0, 40);
-    const cls = (row.className || '').toString().slice(0, 100);
-    const isW = /\bwhisper\b/i.test(cls) && !/reply_from/i.test(cls);
-    const isP = /\bis-presenter\b/i.test(cls);
-    if (isW || isP || /!\S+/.test(row.innerText || '')) {
-        hints.push(txt + ' | ' + (isW ? 'WHISPER' : isP ? 'presenter' : '?') + ' | cls=' + cls);
-    }
-}
-return hints.length ? hints.join(' || ') : 'no recent command/whisper rows';
-""", logErrors: true);
-            AppendLog("Whisper hints: " + (whisperInspect ?? "?"), LogCategory.Info);
-        }
-        catch (Exception ex) { AppendLog("Inspect err: " + ex.Message, LogCategory.Error); }
-    }
-
-    private async void SendTestReply_Click(object sender, RoutedEventArgs e)
+    private async void SessionStats_Click(object sender, RoutedEventArgs e)
     {
         if (!await EnsureChatPageAsync()) return;
-        await SendToImvuChat("Test @ " + DateTime.Now.ToString("HH:mm:ss"));
+        await SendToImvuChat(BuildSessionStatsMessage(), requireBotActive: false);
     }
 
     private void ExitButton_Click(object sender, RoutedEventArgs e)
@@ -2602,6 +2689,10 @@ return hints.length ? hints.join(' || ') : 'no recent command/whisper rows';
         try
         {
             _exiting = true;
+            _botSessionStartedAt = null;
+            _sessionGreetedCount = 0;
+            _botSessionTimerRunning = false;
+            _botSessionPausedElapsed = TimeSpan.Zero;
             AppendLog("Proper exit requested.");
             Application.Current.Shutdown();
         }

@@ -76,12 +76,6 @@ public partial class MainWindow
             Dispatcher.BeginInvoke(() =>
             {
                 if (!_botRunning) return;
-                if (IsJoinLine(txt) || txt.Contains('!'))
-                {
-                    string wTag = isWhisper ? " [whisper]" : "";
-                    string uidTag = !string.IsNullOrEmpty(joinUserId) ? $" uid={joinUserId}" : "";
-                    AppendLog($"Observed{wTag}{uidTag}: {(string.IsNullOrEmpty(sp) ? "?" : sp)} | {txt}", LogCategory.Info);
-                }
                 EnqueueChatLine(sp, txt, isWhisper, whisperRowRef, joinUserId);
             });
         }
@@ -1136,7 +1130,7 @@ function proactiveWhisperReady(expectedName, botName, trustJoinMenu, trustUserId
         {
             await EnsurePublicChatModeAsync();
             await RunPublicChatSendJsAsync(text);
-            AppendLog("Sent: " + text, LogCategory.Sent);
+            AppendActivityLog($"[Sent] {text}", LogCategory.Sent);
             return "ok";
         }
 
@@ -1187,7 +1181,7 @@ return v + ':' + whisperTargetDebug();
 
                 await Task.Delay(500, ct);
                 await RunPublicChatSendJsAsync(text);
-                await FinishWhisperSendAsync("Whisper (join extra) → " + whisperSpeaker + ": " + text);
+                await FinishWhisperSendAsync(whisperSpeaker ?? "?", text);
                 return "ok";
             }
             catch (OperationCanceledException)
@@ -1229,7 +1223,7 @@ return 'clicked';
 
         await Task.Delay(700);
         await RunPublicChatSendJsAsync(text);
-        await FinishWhisperSendAsync("Whisper: " + text, LogCategory.Command);
+        await FinishWhisperSendAsync(whisperSpeaker ?? "?", text);
         return "ok";
     }
 
@@ -1334,7 +1328,7 @@ return clickJoinAvatarForWhisper({{escapedJoinRef}}, {{escapedUserId}}, {{escape
         return pollResult ?? "no-menu-item";
     }
 
-    private async Task FinishWhisperSendAsync(string logLine, LogCategory category = LogCategory.Sent)
+    private async Task FinishWhisperSendAsync(string targetName, string message)
     {
         await Task.Delay(400);
         string? close1 = await ExitWhisperModeAsync();
@@ -1342,7 +1336,7 @@ return clickJoinAvatarForWhisper({{escapedJoinRef}}, {{escapedUserId}}, {{escape
         string? close2 = await ExitWhisperModeAsync();
         if (close1 != "closed" && close2 != "closed")
             AppendLog("Whisper panel may still be open (" + (close2 ?? close1 ?? "?") + ")", LogCategory.Warning);
-        AppendLog(logLine, category);
+        AppendActivityLog($"[Whisper] {targetName} {message}", LogCategory.Whisper);
     }
 
     private const string ChatObserverJs = FindChatRootJs + """
@@ -1351,7 +1345,7 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
     const joinPhrases = /joined\s+the\s+chat|has\s+joined|joined\s+the\s+room|entered\s+the\s+room|has\s+entered|is\s+now\s+in\s+the\s+chat/i;
     const root = __imvuFindChatRoot();
     const cont = root.cont;
-    window._seenJoinKeys = new Set();
+    window._seenJoinRows = new WeakSet();
     window._seenCmdKeys = new Set();
     function firstLine(t) { return (t || '').trim().split(/[\n\r]/)[0].trim(); }
     function norm(t) { return (t || '').replace(/\s+/g, ' ').trim(); }
@@ -1365,41 +1359,28 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
         if (/left\s+the\s+chat/i.test(t)) return false;
         return joinPhrases.test(t);
     }
-    function getJoinNameFromRow(row) {
-        if (!row) return '';
-        const sels = ['.cs2-name', '[class*="cs2-name"]', '[class*="username"]', '[class*="display-name"]', '[class*="user-name"]'];
-        for (const sel of sels) {
-            const nameEl = row.querySelector(sel);
-            if (!nameEl) continue;
-            let sp = norm(nameEl.textContent || nameEl.innerText || '');
-            if (sp.length >= 1 && sp.length <= 60 && !bad.test(sp) && !isJoinText(sp)) return sp;
-        }
-        const prev = row.previousElementSibling;
-        if (prev) {
-            for (const sel of sels) {
-                const nameEl = prev.querySelector(sel);
-                if (!nameEl) continue;
-                let sp = norm(nameEl.textContent || nameEl.innerText || '');
-                if (sp.length >= 1 && sp.length <= 60 && !bad.test(sp) && !isJoinText(sp)) return sp;
-            }
-        }
-        return '';
+    const joinNameRx = /^(.+?)\s+(joined\s+the\s+chat|has\s+joined(?:\s+the\s+room)?|joined(?:\s+the\s+room)?|entered\s+the\s+room|has\s+entered(?:\s+the\s+room)?|is\s+now\s+in\s+the\s+chat)\s*\.?\s*$/i;
+    function joinLinesFromRow(row) {
+        if (!row) return [];
+        return (row.innerText || row.textContent || '')
+            .split(/[\n\r]+/)
+            .map(l => norm(l))
+            .filter(l => l.length >= 6 && l.length <= 100 && isJoinText(l));
+    }
+    function nameFromJoinLine(line) {
+        const m = norm(line).match(joinNameRx);
+        return m ? norm(m[1]) : '';
     }
     function parseJoinRow(row) {
         if (!row || row === cont) return null;
-        const full = norm(row.innerText || row.textContent || '');
-        if (!isJoinText(full) || full.length > 100) return null;
-        const lineCount = (row.innerText || '').split(/[\n\r]+/).map(l => l.trim()).filter(Boolean).length;
-        if (lineCount > 4) return null;
-        let name = getJoinNameFromRow(row);
-        if (!name) {
-            const m = full.match(/^(.+?)\s+(joined\s+the\s+chat|has\s+joined(?:\s+the\s+room)?|joined(?:\s+the\s+room)?|entered\s+the\s+room|has\s+entered(?:\s+the\s+room)?|is\s+now\s+in\s+the\s+chat)\s*\.?\s*$/i);
-            if (m) name = m[1].trim();
-        }
+        const lines = joinLinesFromRow(row);
+        if (!lines.length) return null;
+        const text = lines[lines.length - 1];
+        let name = nameFromJoinLine(text);
         if (!name) name = nameFromJoinAvatarImg(row);
         name = norm(name);
         if (!hasVisibleName(name) || isJoinText(name)) return null;
-        return { name, text: full, row };
+        return { name, text, row };
     }
     function nameFromJoinAvatarImg(row) {
         const wrapper = getJoinRowWrapper(row) || row;
@@ -1456,14 +1437,13 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
     function emitJoin(j) {
         if (!j || !j.row) return;
         let name = norm(j.name);
+        if (!name) name = nameFromJoinLine(j.text);
         if (!name) name = norm(nameFromJoinAvatarImg(j.row));
-        if (!name) name = norm(getJoinNameFromRow(j.row));
-        if (!hasVisibleName(name)) return;
+        if (!hasVisibleName(name) || isJoinText(name)) return;
         const wrapper = getJoinRowWrapper(j.row) || j.row;
         const userId = extractUserIdFromWrapper(wrapper);
-        const key = userId ? ('uid:' + userId) : name.toLowerCase();
-        if (window._seenJoinKeys.has(key)) return;
-        window._seenJoinKeys.add(key);
+        if (window._seenJoinRows.has(wrapper)) return;
+        window._seenJoinRows.add(wrapper);
         let joinRef = 'j' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
         try {
             wrapper.setAttribute('data-imvu-bot-join', joinRef);
@@ -1478,8 +1458,7 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
             const j = parseJoinRow(rows[i]);
             if (!j) continue;
             const wrapper = getJoinRowWrapper(j.row) || j.row;
-            const userId = extractUserIdFromWrapper(wrapper);
-            window._seenJoinKeys.add(userId ? ('uid:' + userId) : j.name.toLowerCase());
+            window._seenJoinRows.add(wrapper);
         }
     }
     function scanRecentJoins() {
@@ -1613,6 +1592,93 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
 window._lastChatContainer = (root.hasStream ? 'chat-stream2' : 'body-fallback')
     + (root.hasInput ? '+input' : '') + ' | ' + (cont.className || cont.tagName);
 """;
+
+    private const string CollectExistingJoinUidsJs = FindChatRootJs + """
+const bad = /radio|on air|now playing|http|www\.|listen|click here|powered by|imvu\.com/i;
+const joinPhrases = /joined\s+the\s+chat|has\s+joined|joined\s+the\s+room|entered\s+the\s+room|has\s+entered|is\s+now\s+in\s+the\s+chat/i;
+const cont = __imvuFindChatRoot().cont;
+function norm(t) { return (t || '').replace(/\s+/g, ' ').trim(); }
+function isJoinText(t) {
+    t = norm(t);
+    if (!t || t.length > 200 || t.length < 6 || bad.test(t) || t.includes('!')) return false;
+    if (/left\s+the\s+chat/i.test(t)) return false;
+    return joinPhrases.test(t);
+}
+function extractUserIdFromNode(node) {
+    if (!node || !node.getAttribute) return '';
+    const dataId = node.getAttribute('data-id') || '';
+    const m = dataId.match(/user\/user-(\d+)/i);
+    return m ? m[1] : '';
+}
+function extractUserIdFromWrapper(wrapper) {
+    if (!wrapper) return '';
+    let node = wrapper;
+    for (let d = 0; node && d < 12; d++) {
+        const uid = extractUserIdFromNode(node);
+        if (uid) return uid;
+        node = node.parentElement;
+    }
+    return '';
+}
+function getJoinRowWrapper(row) {
+    if (!row) return null;
+    let node = row;
+    let fallback = null;
+    for (let d = 0; node && d < 12; d++) {
+        const kids = Array.from(node.children).filter(c => (c.tagName || '').toLowerCase() === 'div');
+        if (kids.length >= 2) {
+            const secondTxt = norm(kids[1].innerText || kids[1].textContent || '');
+            if (isJoinText(secondTxt)) {
+                if (extractUserIdFromNode(node)) return node;
+                if (!fallback) fallback = node;
+            }
+        }
+        node = node.parentElement;
+    }
+    return fallback || row;
+}
+function joinLinesFromRow(row) {
+    if (!row) return [];
+    return (row.innerText || row.textContent || '')
+        .split(/[\n\r]+/)
+        .map(l => norm(l))
+        .filter(l => l.length >= 6 && l.length <= 100 && isJoinText(l));
+}
+function parseJoinRow(row) {
+    if (!row || row === cont) return null;
+    const lines = joinLinesFromRow(row);
+    if (!lines.length) return null;
+    return { row };
+}
+const uids = new Set();
+const rows = cont.querySelectorAll('[class*="msg"], [class*="message"], [class*="chat-line"], [class*="system"], [class*="event"], [class*="notification"], [class*="join"], li, div');
+const start = Math.max(0, rows.length - 40);
+for (let i = rows.length - 1; i >= start; i--) {
+    const j = parseJoinRow(rows[i]);
+    if (!j) continue;
+    const wrapper = getJoinRowWrapper(j.row) || j.row;
+    const userId = extractUserIdFromWrapper(wrapper);
+    if (userId) uids.add(userId);
+}
+return Array.from(uids).join(',');
+""";
+
+    private async Task SeedGreetedFromExistingChatAsync()
+    {
+        if (!IsWebViewReady) return;
+        try
+        {
+            string? raw = await RunJsStringAsync(CollectExistingJoinUidsJs, logErrors: false);
+            if (string.IsNullOrWhiteSpace(raw)) return;
+            foreach (string part in raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (!string.IsNullOrWhiteSpace(part))
+                    _greetedUserIds.Add(part);
+            }
+            AppendLog($"Seeded {_greetedUserIds.Count} greeted uid(s) from chat history.");
+        }
+        catch (Exception ex) { AppendLog("Seed greeted uids err: " + ex.Message); }
+    }
 
     private async Task RunChatDiagnosticsAsync()
     {

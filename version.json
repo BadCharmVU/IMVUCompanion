@@ -1,5 +1,5 @@
 {
-  "version": "0.7.1",
-  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.7.1/IMVUCompanion-Setup-v0.7.1.exe",
-  "releaseNotes": "v0.7.1 — fix startup crash (app icon), UI clock polish, session log line."
+  "version": "0.8.0",
+  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.8.0/IMVUCompanion-Setup-v0.8.0.exe",
+  "releaseNotes": "v0.8.0 — cleaner activity log, uid-based join memory, session stats (!stats + button), command triggers, dev workflow cleanup."
 }

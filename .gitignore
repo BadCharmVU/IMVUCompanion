@@ -1,10 +1,12 @@
-# Build output
+# Build output (local dev exe: bin/Release/net8.0-windows10.0.19041.0/ only)
 bin/
 obj/
+bin/Debug/
 out/
 publish/
 publish.*/
 release/
+release-build/
 release2/
 release-v071/
 publish-log.txt

@@ -1,0 +1,18 @@
+LOCAL DEVELOPMENT — run after every code change:
+
+  cd C:\Users\serve\ansel\IMVUCompanion
+  .\scripts\Run-Dev.ps1
+
+Your test exe (only this one):
+
+  bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe
+
+Do NOT test from:
+  bin\Debug\...
+  publish\...
+  publish.*\...
+  release\...  (installers only)
+
+When ready to ship a new version to testers:
+
+  .\scripts\Publish-Release.ps1
