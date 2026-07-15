@@ -16,3 +16,5 @@ Do NOT test from:
 When ready to ship a new version to testers:
 
   .\scripts\Publish-Release.ps1
+  .\scripts\Finish-Release-vX.Y.Z.ps1
+  (GitHub token prompted each time — not saved; scopes: repo, gist)
