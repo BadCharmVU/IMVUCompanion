@@ -58,15 +58,24 @@ $publishRel = $publishRel.Substring($ProjectRoot.Length).TrimStart('\')
 $publishDefine = "..\$publishRel"
 $setup = Join-Path $releaseDir $setupName
 if (Test-Path $setup) {
-    try { Remove-Item $setup -Force } catch {
-        Rename-Item $setup ($setup + ".old") -Force
+    try {
+        Remove-Item $setup -Force -ErrorAction Stop
+    } catch {
+        $stale = Join-Path $releaseDir ("{0}.locked.{1:yyyyMMddHHmmss}" -f $setupName, (Get-Date))
+        try {
+            Rename-Item $setup $stale -Force -ErrorAction Stop
+            Write-Host "Installer locked - moved aside to $stale"
+        } catch {
+            Write-Warning "Could not remove old installer (locked). ISCC may overwrite or fail."
+        }
     }
 }
 $iss = Join-Path $ProjectRoot "installer\IMVUCompanion.iss"
 & $iscc "/O$releaseDir" "/DPublishDir=$publishDefine" $iss
+if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
 $setup = Join-Path $releaseDir $setupName
 if (Test-Path $setup) {
-    Write-Host "==> Installer ready: $setup"
+    Write-Host "==> Installer ready: $setup ($([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB)"
 } else {
-    throw "Installer build failed"
+    throw "Installer build failed - missing $setup"
 }

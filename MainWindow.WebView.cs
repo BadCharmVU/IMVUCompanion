@@ -34,6 +34,13 @@ public partial class MainWindow
 
             core.NavigationCompleted += Core_NavigationCompleted;
             core.WebMessageReceived += Core_WebMessageReceived;
+            core.FrameCreated += (_, e) =>
+            {
+                _ = e.Frame.ExecuteScriptAsync(ImvuActiveChatHookJs);
+            };
+
+            // Capture activeChat in every frame when IMVU registers it (no UI clicks).
+            await core.AddScriptToExecuteOnDocumentCreatedAsync(ImvuActiveChatHookJs);
 
             _webViewReady = true;
             core.Navigate(ImvuHomeUrl);
@@ -53,11 +60,9 @@ public partial class MainWindow
         Dispatcher.BeginInvoke(async () =>
         {
             UpdatePageStatus();
+            // Navigation (Home / Chat / Reload / leave) may drop the room — re-check presence
             if (_botRunning && IsWebViewReady)
-            {
-                _observerBoundUrl = null;
-                await SetupChatObserver();
-            }
+                await CheckRoomPresenceWhileBotRunningAsync();
         });
     }
 
@@ -75,7 +80,8 @@ public partial class MainWindow
             string joinUserId = parts.Length > 4 ? parts[4] : "";
             Dispatcher.BeginInvoke(() =>
             {
-                if (!_botRunning) return;
+                // Only process while bot is active in a live room (paused-no-room skips)
+                if (!IsBotActive) return;
                 EnqueueChatLine(sp, txt, isWhisper, whisperRowRef, joinUserId);
             });
         }
@@ -94,15 +100,25 @@ public partial class MainWindow
         if (PageUrlText != null)
             PageUrlText.Text = url.Length > 48 ? url[..45] + "…" : url;
 
-        bool inChat = url.Contains("/chat", StringComparison.OrdinalIgnoreCase) ||
-                      url.Contains("room", StringComparison.OrdinalIgnoreCase);
-        string state = _botRunning ? "Bot RUNNING" : "Ready";
-        UpdateStatusText(inChat ? $"{state} | Chat page detected" : $"{state} | Open a chat room on the left");
+        string state;
+        if (_botRunning && _botPausedNoRoom)
+            state = "Bot PAUSED (no room)";
+        else if (_botRunning)
+            state = "Bot RUNNING";
+        else
+            state = "Ready";
+
+        bool urlChat = url.Contains("/chat", StringComparison.OrdinalIgnoreCase) ||
+                       url.Contains("room", StringComparison.OrdinalIgnoreCase);
+        UpdateStatusText(urlChat
+            ? $"{state} | Chat URL — Start Bot needs active room UI"
+            : $"{state} | Open a chat room on the left");
     }
 
     private void NavHome_Click(object sender, RoutedEventArgs e)
     {
         if (IsWebViewReady) ImvuWebView.CoreWebView2.Navigate(ImvuHomeUrl);
+        // Room leave via navigation is detected by CheckRoomPresenceWhileBotRunningAsync
     }
 
     private void NavChat_Click(object sender, RoutedEventArgs e)
@@ -136,9 +152,17 @@ public partial class MainWindow
                 using var doc = JsonDocument.Parse(json);
                 if (doc.RootElement.ValueKind == JsonValueKind.String)
                     return doc.RootElement.GetString();
+                // Non-string results (numbers, objects) — stringify for diagnostics
+                if (doc.RootElement.ValueKind != JsonValueKind.Null &&
+                    doc.RootElement.ValueKind != JsonValueKind.Undefined)
+                    return doc.RootElement.ToString();
             }
             catch { }
-            return null;
+            // Last resort: strip surrounding quotes if present
+            var t = json.Trim();
+            if (t.Length >= 2 && t[0] == '"' && t[^1] == '"')
+                return t[1..^1];
+            return t.Length > 0 ? t : null;
         }
     }
 
@@ -165,7 +189,10 @@ public partial class MainWindow
         {
             string script = JsIife(js);
             string json = await ImvuWebView.CoreWebView2.ExecuteScriptAsync(script);
-            return ParseJsStringResult(json);
+            var parsed = ParseJsStringResult(json);
+            if (parsed == null && logErrors && !string.IsNullOrEmpty(json) && json != "null")
+                AppendLog("JS raw result: " + (json.Length > 180 ? json[..180] + "…" : json), LogCategory.Warning);
+            return parsed;
         }
         catch (Exception ex)
         {
@@ -201,6 +228,44 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>
+    /// Trusted mouse click via CDP. Synthetic DOM events are often ignored by IMVU's user menu;
+    /// reply-whisper works with JS clicks because that control listens differently.
+    /// </summary>
+    private async Task<bool> CdpMouseClickAsync(double x, double y, string button = "left")
+    {
+        if (!IsWebViewReady) return false;
+        try
+        {
+            var core = ImvuWebView.CoreWebView2;
+            string Move(string type, string btn) =>
+                $$"""{"type":"{{type}}","x":{{x.ToString(System.Globalization.CultureInfo.InvariantCulture)}},"y":{{y.ToString(System.Globalization.CultureInfo.InvariantCulture)}},"button":"{{btn}}","buttons":{{(type == "mousePressed" ? "1" : "0")}},"clickCount":1}""";
+
+            await core.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent",
+                $$"""{"type":"mouseMoved","x":{{x.ToString(System.Globalization.CultureInfo.InvariantCulture)}},"y":{{y.ToString(System.Globalization.CultureInfo.InvariantCulture)}}}""");
+            await core.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent", Move("mousePressed", button));
+            await core.CallDevToolsProtocolMethodAsync("Input.dispatchMouseEvent", Move("mouseReleased", button));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AppendLog("CDP click failed: " + ex.Message, LogCategory.Warning);
+            return false;
+        }
+    }
+
+    private static bool TryParsePoint(string? s, out double x, out double y)
+    {
+        x = y = 0;
+        if (string.IsNullOrWhiteSpace(s)) return false;
+        var parts = s.Split(',');
+        if (parts.Length < 2) return false;
+        return double.TryParse(parts[0].Trim(), System.Globalization.NumberStyles.Float,
+                   System.Globalization.CultureInfo.InvariantCulture, out x)
+            && double.TryParse(parts[1].Trim(), System.Globalization.NumberStyles.Float,
+                   System.Globalization.CultureInfo.InvariantCulture, out y);
+    }
+
     private const string FindChatRootJs = """
 function __imvuFindChatRoot() {
     function findInDoc(doc) {
@@ -223,6 +288,24 @@ function __imvuFindChatRoot() {
 }
 """;
 
+    /// <summary>
+    /// True only when chat-stream + chat input are present (real room UI), not just /chat URL.
+    /// </summary>
+    private async Task<bool> IsActiveRoomPresentAsync()
+    {
+        if (!IsWebViewReady) return false;
+        string url = ImvuWebView.CoreWebView2.Source ?? "";
+        if (!url.Contains("imvu.com", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var detected = await RunJsStringAsync(FindChatRootJs + """
+const r = __imvuFindChatRoot();
+// Active room = message stream + compose input (not lobby-only)
+return (r.hasStream && r.hasInput) ? 'yes' : 'no';
+""", logErrors: false);
+        return detected == "yes";
+    }
+
     private async Task<bool> EnsureChatPageAsync()
     {
         if (!IsWebViewReady)
@@ -236,22 +319,88 @@ function __imvuFindChatRoot() {
             AppendLog("Navigate to IMVU on the left panel first.", LogCategory.Warning);
             return false;
         }
-        bool urlLooksLikeChat = url.Contains("/chat", StringComparison.OrdinalIgnoreCase) ||
-                                url.Contains("room", StringComparison.OrdinalIgnoreCase);
-        if (!urlLooksLikeChat)
+        if (!await IsActiveRoomPresentAsync())
         {
-            var detected = await RunJsStringAsync(FindChatRootJs + """
-const r = __imvuFindChatRoot();
-return (r.hasStream || r.hasInput) ? 'yes' : 'no';
-""");
-            if (detected != "yes")
-            {
-                AppendLog("Open your chat room in the left panel, then Start Bot.", LogCategory.Warning);
-                return false;
-            }
-            AppendLog("Chat UI detected (overlay — URL may not show /chat).", LogCategory.Info);
+            AppendLog("No active chat room (need stream + input). Open a room, then try again.", LogCategory.Warning);
+            return false;
         }
         return true;
+    }
+
+    /// <summary>
+    /// Best-effort leave so the account does not stay seated after app exit.
+    /// Tries API/UI leave, then navigates Home and waits briefly.
+    /// </summary>
+    private async Task LeaveImvuRoomAsync()
+    {
+        if (!IsWebViewReady) return;
+        try
+        {
+            // 1) Prefer in-page leave if activeChat exposes it
+            await RunJsStringAsync(FindChatRootJs + ProactiveWhisperJs + """
+function tryLeave() {
+  const chat = (typeof __findActiveChat === 'function' && __findActiveChat())
+    || window.__imvuCompanionActiveChat
+    || (window.top && window.top.__imvuCompanionActiveChat);
+  if (chat) {
+    for (const name of ['leaveRoom','leave','exitRoom','disconnect','close','exit']) {
+      try {
+        if (typeof chat[name] === 'function') {
+          chat[name]();
+          return 'api:' + name;
+        }
+      } catch (e) {}
+    }
+    try {
+      if (typeof chat.resetMessageTarget === 'function') chat.resetMessageTarget();
+    } catch (e) {}
+  }
+  // 2) Click leave-looking controls
+  const docs = typeof __imvuAllDocs === 'function' ? __imvuAllDocs() : [document];
+  for (const doc of docs) {
+    for (const el of doc.querySelectorAll('button, a, [role="button"], li, span, div')) {
+      try {
+        const t = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!t || t.length > 32) continue;
+        if (t === 'leave' || t === 'leave room' || t === 'exit room' || t === 'exit') {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) {
+            el.click();
+            return 'click:' + t;
+          }
+        }
+      } catch (e) {}
+    }
+  }
+  return 'none';
+}
+return tryLeave();
+""", logErrors: false);
+
+            // 3) Navigate away from room so IMQ session tears down
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnNav(object? s, CoreWebView2NavigationCompletedEventArgs e)
+            {
+                try { ImvuWebView.CoreWebView2.NavigationCompleted -= OnNav; } catch { }
+                tcs.TrySetResult(e.IsSuccess);
+            }
+            try
+            {
+                ImvuWebView.CoreWebView2.NavigationCompleted += OnNav;
+                ImvuWebView.CoreWebView2.Navigate(ImvuHomeUrl);
+                await Task.WhenAny(tcs.Task, Task.Delay(4000));
+            }
+            finally
+            {
+                try { ImvuWebView.CoreWebView2.NavigationCompleted -= OnNav; } catch { }
+            }
+            // Brief settle so leave is committed before process ends
+            await Task.Delay(800);
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Leave room: " + ex.Message, LogCategory.Warning);
+        }
     }
 
     private const string ChatInputSelector =
@@ -305,6 +454,13 @@ return still ? 'still-open' : 'closed';
     }
 
     private async Task ForceDismissWhisperUiAsync() => await EnsurePublicChatModeAsync();
+
+    /// <summary>Quick Escape/dismiss for proactive whisper retries (avoids multi-second close loops).</summary>
+    private async Task QuickDismissWhisperUiAsync()
+    {
+        await RunJsStringAsync(FindChatRootJs + ProactiveWhisperJs + "return dismissOpenUi();", logErrors: false);
+        await ExitWhisperModeAsync();
+    }
 
     private async Task SetJoinPollPausedAsync(bool paused)
     {
@@ -859,35 +1015,45 @@ function tryProactiveWhisperClick(strategy, joinRef, expectedName, botName) {
     return 'clicked:' + strategy;
 }
 function joinAvatarClickTarget(wrapper) {
+    // Join row: outer div (has uId) → first child div (contains <img>) — left-click that first child.
     const kids = Array.from(wrapper.children).filter(c => (c.tagName || '').toLowerCase() === 'div');
     if (kids.length < 1) return null;
-    const firstDiv = kids[0];
-    return firstDiv.querySelector('button, [role="button"]')
-        || firstDiv.querySelector('a button, a [role="button"]')
-        || firstDiv.querySelector('button img, [role="button"] img')
-        || firstDiv.querySelector('a img, a [class*="avatar"], a')
-        || firstDiv.querySelector('img[class*="avatar"], img')
-        || firstDiv.querySelector('[class*="avatar"] img, [class*="avatar"]')
-        || firstDiv;
+    return kids[0];
 }
-function clickJoinAvatarForWhisper(joinRef, userId, expectedName, botName) {
+/** In-page left-click only — no OS cursor, no right-click, no CDP. */
+function leftClickEl(el) {
+    if (!el) return false;
+    try { return robustClick(el); } catch (e) { return false; }
+}
+/** Step 1: left-click first child div (image) on join row for this uId. */
+function openJoinUserMenuByUid(joinRef, userId) {
     const wrapper = resolveJoinWrapper(joinRef, userId);
     if (!wrapper) return 'no-join-row';
-    const wrapperUserId = extractUserIdFromWrapper(wrapper);
-    if (userId && wrapperUserId && userId !== wrapperUserId) return 'wrong-user-id:' + wrapperUserId;
-    const joinerName = joinNameFromWrapper(wrapper);
-    const want = foldImvuName(expectedName);
-    const bot = foldImvuName(botName || '');
-    const joiner = foldImvuName(joinerName);
-    if (bot && want && want === bot) return 'joiner-is-bot';
-    if (bot && joiner && joiner === bot) return 'joiner-is-bot';
-    const uidTrusted = userId && wrapperUserId && userId === wrapperUserId;
-    if (!uidTrusted && joiner && want && !namesRoughlyMatch(joiner, want)) return 'wrong-join-row:' + (joinerName || '?');
-    const clickTarget = joinAvatarClickTarget(wrapper);
-    if (!clickTarget) return 'no-avatar-button';
-    try { window._joinWhisperUserId = wrapperUserId || userId || ''; } catch (e) {}
-    robustClick(clickTarget);
-    return 'avatar-clicked' + (wrapperUserId ? ':uid=' + wrapperUserId : '');
+    const firstDiv = joinAvatarClickTarget(wrapper);
+    if (!firstDiv) return 'no-first-child';
+    if (!firstDiv.querySelector('img') && !firstDiv.querySelector('[class*="avatar"]')) {
+        // still click first child; structure may vary slightly
+    }
+    try { window._joinWhisperUserId = extractUserIdFromWrapper(wrapper) || userId || ''; } catch (e) {}
+    if (!leftClickEl(firstDiv)) return 'click-failed';
+    return 'ok';
+}
+/** Step 2: left-click exact menu item. */
+function clickSendAWhisperExact() {
+    for (const root of allSearchRoots()) {
+        const item = root.querySelector('li[data-menu-item="send_a_whisper"]')
+            || root.querySelector('[data-menu-item="send_a_whisper"]');
+        if (!item) continue;
+        if (!leftClickEl(item)) continue;
+        return 'ok';
+    }
+    return 'no-menu-item';
+}
+function clickJoinAvatarForWhisper(joinRef, userId, expectedName, botName, useRightClick) {
+    // useRightClick ignored — only left-click first child div
+    return openJoinUserMenuByUid(joinRef, userId) === 'ok'
+        ? ('avatar-clicked' + (userId ? ':uid=' + userId : ''))
+        : 'no-join-row';
 }
 function clickJoinAvatarByRef(joinRef, expectedName, botName, useRightClick) {
     const row = findJoinRowByRef(joinRef);
@@ -1001,20 +1167,34 @@ function findUserTarget(targetName) {
 }
 function allSearchRoots() {
     const roots = [];
-    for (const doc of __imvuAllDocs()) {
-        roots.push(doc);
+    function add(root) {
+        if (!root || roots.indexOf(root) >= 0) return;
+        roots.push(root);
         try {
-            doc.querySelectorAll('*').forEach(el => { if (el.shadowRoot) roots.push(el.shadowRoot); });
+            const nodes = root.querySelectorAll ? root.querySelectorAll('*') : [];
+            for (const el of nodes) {
+                if (el.shadowRoot) add(el.shadowRoot);
+            }
         } catch (e) {}
     }
+    for (const doc of __imvuAllDocs()) add(doc);
     return roots;
 }
 function findVisibleMenus() {
     const menus = [];
-    const sels = '[role="menu"], [class*="context-menu"], [class*="dropdown-menu"], [class*="popup-menu"], [class*="user-menu"], [class*="profile-menu"], [class*="action-menu"], ul[class*="menu"]';
+    const sels = [
+        '[role="menu"]', '[role="listbox"]', '[role="dialog"]',
+        '[class*="context-menu"]', '[class*="dropdown-menu"]', '[class*="popup-menu"]',
+        '[class*="user-menu"]', '[class*="profile-menu"]', '[class*="action-menu"]',
+        '[class*="Popover"]', '[class*="popover"]', '[class*="Dropdown"]',
+        '[class*="MenuList"]', '[class*="menu-list"]', '[class*="overlay-menu"]',
+        '[class*="context-menu-manager"]', '[class*="menu-manager"]',
+        'ul[class*="menu"]', '[class*="flyout"]', '[class*="tooltip-menu"]'
+    ].join(',');
     for (const root of allSearchRoots()) {
         for (const el of root.querySelectorAll(sels)) {
-            if (isVisibleEl(el)) menus.push(el);
+            if (isVisibleEl(el) || (el.childElementCount > 0 && (el.textContent || '').trim().length > 0))
+                menus.push(el);
         }
     }
     return menus;
@@ -1030,53 +1210,129 @@ function menuMatchesUserId(menu, userId) {
     const blob = ((menu.innerHTML || '') + ' ' + (menu.textContent || ''));
     return blob.includes('user-' + userId);
 }
+function isWhisperActionText(txt) {
+    txt = (txt || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!txt || txt.length > 64) return false;
+    if (txt === 'whisper' || txt === 'send whisper' || txt === 'send a whisper') return true;
+    if (/^send\s+a?\s*whisper$/.test(txt)) return true;
+    if (/\bwhisper\b/.test(txt) && !/reply/.test(txt)) return true;
+    if (/\bwhisper\b/.test(txt) && /(send|private|message)/.test(txt)) return true;
+    return false;
+}
+function elementOwnLabel(el) {
+    if (!el || !el.getAttribute) return '';
+    const al = (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('data-tooltip') || '').trim();
+    if (al) return al;
+    let t = '';
+    for (const n of el.childNodes) {
+        if (n.nodeType === 3) t += n.textContent || '';
+    }
+    t = t.replace(/\s+/g, ' ').trim();
+    if (t) return t;
+    return (el.textContent || '').replace(/\s+/g, ' ').trim();
+}
+function pickWhisperClickable(el) {
+    if (!el) return null;
+    return el.closest('[data-menu-item], [role="menuitem"], [role="option"], button, a, [role="button"], li, [class*="menu-item"], [class*="MenuItem"]') || el;
+}
+function isReplyWhisperNoise(el) {
+    const cls = ((el && el.className) || '').toString();
+    return /reply_from_whisper|reply-to-whisper|whisper-reply|icon-reply/i.test(cls);
+}
 function whisperItemInMenu(menu) {
     if (!menu) return null;
-    for (const item of menu.querySelectorAll('[data-menu-item="send_a_whisper"]')) {
-        if (isVisibleEl(item)) return item;
-    }
-    for (const el of menu.querySelectorAll('li, [role="menuitem"], button, a, div, span')) {
-        const dm = el.getAttribute && el.getAttribute('data-menu-item');
-        if (dm === 'send_a_whisper' && isVisibleEl(el)) return el;
-        const txt = (el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        if ((/^send a whisper$/i.test(txt) || txt === 'whisper') && txt.length < 30 && isVisibleEl(el)) return el;
+    for (const el of menu.querySelectorAll('*')) {
+        if (isReplyWhisperNoise(el)) continue;
+        const dm = ((el.getAttribute && (el.getAttribute('data-menu-item') || '')) + ' ' +
+            (el.getAttribute && (el.getAttribute('data-action') || '')) + ' ' +
+            (el.getAttribute && (el.getAttribute('data-testid') || ''))).toLowerCase();
+        if (dm.includes('whisper')) {
+            const c = pickWhisperClickable(el);
+            if (c && (isVisibleEl(c) || isVisibleEl(el))) return c;
+        }
+        const cls = (el.className || '').toString();
+        if (/\bwhisper\b/i.test(cls) && !isReplyWhisperNoise(el)) {
+            const c = pickWhisperClickable(el);
+            if (c && isVisibleEl(c)) return c;
+        }
+        const label = elementOwnLabel(el);
+        if (isWhisperActionText(label)) {
+            const c = pickWhisperClickable(el);
+            if (c) return c;
+        }
     }
     return null;
 }
-function findSendAWhisperMenuItem(userId, joinRef) {
-    const wrapper = resolveJoinWrapper(joinRef, userId);
-    const clickRect = wrapper && isVisibleEl(wrapper) ? wrapper.getBoundingClientRect() : null;
-    const menus = findVisibleMenus();
-    if (userId) {
-        for (const menu of menus) {
-            if (!menuMatchesUserId(menu, userId)) continue;
-            const item = whisperItemInMenu(menu);
-            if (item) return item;
-        }
-    }
-    if (clickRect) {
-        let best = null, bestDist = 1e12;
-        for (const menu of menus) {
-            const item = whisperItemInMenu(menu);
-            if (!item) continue;
-            const mr = menu.getBoundingClientRect();
-            const dx = (mr.left + mr.width / 2) - (clickRect.left + clickRect.width / 2);
-            const dy = (mr.top + mr.height / 2) - (clickRect.top + clickRect.height / 2);
-            const dist = dx * dx + dy * dy;
-            if (dist < bestDist) { bestDist = dist; best = item; }
-        }
-        if (best) return best;
-    }
-    for (const menu of menus) {
-        const item = whisperItemInMenu(menu);
-        if (item) return item;
-    }
+function findWhisperActionAnywhere() {
     for (const root of allSearchRoots()) {
-        for (const item of root.querySelectorAll('[data-menu-item="send_a_whisper"]')) {
-            if (isVisibleEl(item)) return item;
+        for (const el of root.querySelectorAll('[data-menu-item], [data-action], [data-testid], [class*="whisper"], [class*="Whisper"], button, a, [role="menuitem"], [role="button"], li, span, div')) {
+            if (isReplyWhisperNoise(el)) continue;
+            const dm = ((el.getAttribute('data-menu-item') || '') + ' ' + (el.getAttribute('data-action') || '') + ' ' + (el.getAttribute('data-testid') || '')).toLowerCase();
+            if (dm.includes('whisper') && !dm.includes('reply')) {
+                const c = pickWhisperClickable(el);
+                if (c && isVisibleEl(c)) return c;
+            }
+            const cls = (el.className || '').toString();
+            if (/\bwhisper\b/i.test(cls) && !isReplyWhisperNoise(el) && isVisibleEl(el)) {
+                const c = pickWhisperClickable(el);
+                if (c) return c;
+            }
+            const label = elementOwnLabel(el);
+            if (isWhisperActionText(label) && label.length <= 40) {
+                const c = pickWhisperClickable(el);
+                if (c && (isVisibleEl(c) || isVisibleEl(el))) return c;
+            }
         }
     }
     return null;
+}
+function frameOffsetForEl(el) {
+    let ox = 0, oy = 0;
+    const win = el.ownerDocument?.defaultView;
+    if (!win || win === window) return { ox, oy };
+    if (win.frameElement) {
+        const fr = win.frameElement.getBoundingClientRect();
+        return { ox: fr.left, oy: fr.top };
+    }
+    for (const frame of document.querySelectorAll('iframe')) {
+        try {
+            if (frame.contentWindow === win) {
+                const fr = frame.getBoundingClientRect();
+                return { ox: fr.left, oy: fr.top };
+            }
+        } catch (e) {}
+    }
+    return { ox, oy };
+}
+function clickPointForEl(el) {
+    if (!el) return '';
+    try { el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) {}
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return '';
+    const { ox, oy } = frameOffsetForEl(el);
+    const x = Math.round(ox + r.left + Math.max(2, r.width / 2));
+    const y = Math.round(oy + r.top + Math.max(2, r.height / 2));
+    return x + ',' + y;
+}
+function getJoinAvatarClickPoint(joinRef, userId) {
+    const wrapper = resolveJoinWrapper(joinRef, userId);
+    if (!wrapper) return '';
+    const el = joinAvatarClickTarget(wrapper);
+    return clickPointForEl(el);
+}
+function getWhisperMenuClickPoint(userId, joinRef) {
+    const item = findSendAWhisperMenuItem(userId, joinRef);
+    return clickPointForEl(item);
+}
+function markJoinAvatarForClick(joinRef, userId) {
+    const wrapper = resolveJoinWrapper(joinRef, userId);
+    if (!wrapper) return 'no-join-row';
+    const el = joinAvatarClickTarget(wrapper);
+    if (!el) return 'no-avatar-button';
+    const pt = clickPointForEl(el);
+    if (!pt) return 'no-point';
+    try { window._joinWhisperUserId = extractUserIdFromWrapper(wrapper) || userId || ''; } catch (e) {}
+    return 'point:' + pt;
 }
 function clickUserTarget(targetName, useRightClick) {
     const el = findUserTarget(targetName);
@@ -1087,11 +1343,56 @@ function clickUserTarget(targetName, useRightClick) {
     if (fromJoinAvatar) return useRightClick ? 'join-avatar-contextmenu' : 'join-avatar-clicked';
     return useRightClick ? 'user-contextmenu' : 'user-clicked';
 }
+function getOpenUserMenuItems() {
+    const items = [];
+    const seen = new Set();
+    for (const root of allSearchRoots()) {
+        const menus = root.querySelectorAll(
+            '[role="menu"], [class*="context-menu"], [class*="menu-manager"], [class*="user-menu"], [class*="action-menu"], [class*="dropdown-menu"]'
+        );
+        for (const menu of menus) {
+            let cands = Array.from(menu.querySelectorAll('[role="menuitem"], [data-menu-item], [class*="menu-item"], [class*="MenuItem"]'));
+            if (!cands.length) {
+                cands = Array.from(menu.querySelectorAll('li, button, a, div, span')).filter(el => {
+                    if (el.childElementCount > 6) return false;
+                    const t = (elementOwnLabel(el) || (el.textContent || '')).replace(/\s+/g, ' ').trim();
+                    return t.length >= 2 && t.length <= 48;
+                });
+            }
+            for (const el of cands) {
+                if (seen.has(el)) continue;
+                const r = el.getBoundingClientRect();
+                if (r.width <= 0 || r.height <= 0) continue;
+                const label = (elementOwnLabel(el) || (el.textContent || '')).replace(/\s+/g, ' ').trim();
+                if (!label || label.length > 48) continue;
+                seen.add(el);
+                items.push({ el, label, y: r.top });
+            }
+        }
+    }
+    items.sort((a, b) => a.y - b.y);
+    return items;
+}
+function findSendAWhisperMenuItem(userId, joinRef) {
+    for (const root of allSearchRoots()) {
+        const exact = root.querySelector('li[data-menu-item="send_a_whisper"], [data-menu-item="send_a_whisper"]');
+        if (exact) return exact;
+    }
+    return null;
+}
+function getMenuItemsDebug() {
+    const items = getOpenUserMenuItems();
+    if (!items.length) return 'menu-items=0';
+    return 'menu-items=' + items.length + ' | ' + items.map((it, i) => (i + 1) + ':' + it.label).join(' || ');
+}
+function whisperMenuDebug() {
+    const itemsDbg = getMenuItemsDebug();
+    const any = findSendAWhisperMenuItem('', '');
+    const pick = any ? ((elementOwnLabel(any) || any.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40)) : 'none';
+    return itemsDbg + ' | pick=' + pick;
+}
 function clickSendAWhisperMenu(userId, joinRef) {
-    const item = findSendAWhisperMenuItem(userId, joinRef);
-    if (!item) return 'no-menu-item';
-    robustClick(item);
-    return 'menu-clicked';
+    return clickSendAWhisperExact() === 'ok' ? 'menu-clicked' : 'no-menu-item';
 }
 function whisperComposeOpen() {
     return anyWhisperComposeActive() ? 'yes' : 'no';
@@ -1117,6 +1418,1056 @@ function proactiveWhisperReady(expectedName, botName, trustJoinMenu, trustUserId
     if (v === 'ok' || v === 'ok-trusted') return 'ok';
     return v;
 }
+/* ===== Silent whisper via IMVU activeChat API (no menus / no mouse) =====
+ * From welcome.min.js: menu item "send_a_whisper" calls
+ *   activeChat.handleWhisperAttempt(node)
+ * Chat/gifts use:
+ *   activeChat.sendMessage(text)
+ * Whisper mode uses messageTarget; reset with resetMessageTarget().
+ */
+function __imvuAllWindows() {
+    const wins = [];
+    const seen = new Set();
+    function addWin(w) {
+        if (!w || seen.has(w)) return;
+        seen.add(w);
+        wins.push(w);
+        try {
+            for (const f of w.document.querySelectorAll('iframe')) {
+                try { if (f.contentWindow) addWin(f.contentWindow); } catch (e) {}
+            }
+        } catch (e) {}
+    }
+    addWin(window);
+    try { if (window.top && window.top !== window) addWin(window.top); } catch (e) {}
+    return wins;
+}
+function __getCachedActiveChat() {
+    for (const w of __imvuAllWindows()) {
+        try {
+            if (w.__imvuCompanionActiveChat) return w.__imvuCompanionActiveChat;
+        } catch (e) {}
+    }
+    try {
+        if (window.top && window.top.__imvuCompanionActiveChat)
+            return window.top.__imvuCompanionActiveChat;
+    } catch (e) {}
+    return null;
+}
+function __chatMethodScore(o) {
+    if (!o || typeof o !== 'object') return -1;
+    let score = 0;
+    try {
+        if (typeof o.handleWhisperAttempt === 'function') score += 100;
+        if (typeof o.sendMessage === 'function') score += 40;
+        if (typeof o.resetMessageTarget === 'function') score += 20;
+        if (typeof o.inWhisperMode === 'function') score += 15;
+        if (typeof o.set === 'function') score += 15;
+        if (typeof o.get === 'function') score += 5;
+        if (typeof o.trigger === 'function') score += 5;
+        if (typeof o.getParticipants === 'function') score += 5;
+    } catch (e) {}
+    return score;
+}
+function __chatMethodList(o) {
+    const names = ['handleWhisperAttempt', 'sendMessage', 'resetMessageTarget', 'inWhisperMode', 'set', 'get', 'trigger', 'getParticipants'];
+    const have = [];
+    for (const n of names) {
+        try { if (typeof o[n] === 'function') have.push(n); } catch (e) {}
+    }
+    return have.join(',');
+}
+function __cacheActiveChat(o) {
+    if (!o) return;
+    try { window.__imvuCompanionActiveChat = o; } catch (e) {}
+    try { if (window.top) window.top.__imvuCompanionActiveChat = o; } catch (e) {}
+}
+/** Prefer object that can actually whisper (handleWhisperAttempt + sendMessage). */
+function __findActiveChat() {
+    const seen = new Set();
+    const q = [];
+    let best = null;
+    let bestScore = -1;
+
+    function consider(o) {
+        if (!o || (typeof o !== 'object' && typeof o !== 'function')) return;
+        try {
+            if (seen.has(o)) return;
+            seen.add(o);
+        } catch (e) { return; }
+        q.push(o);
+        const score = __chatMethodScore(o);
+        // Must be able to send somehow; prefer whisper-capable
+        if (score >= 40 && score > bestScore) {
+            bestScore = score;
+            best = o;
+        }
+    }
+
+    // Cached only if it still looks good
+    try {
+        const cached = __getCachedActiveChat();
+        if (cached && __chatMethodScore(cached) >= 100) return cached;
+        if (cached) consider(cached);
+    } catch (e) {}
+
+    for (const w of __imvuAllWindows()) {
+        try { consider(w.IMVU); consider(w.$); consider(w.jQuery); } catch (e) {}
+        try {
+            for (const k of Object.getOwnPropertyNames(w)) {
+                try {
+                    const v = w[k];
+                    consider(v);
+                    if (v && typeof v.get === 'function') {
+                        try { consider(v.get('activeChat')); } catch (e) {}
+                        try { consider(v.get('chat')); } catch (e) {}
+                        try { consider(v.get('policyChat')); } catch (e) {}
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+        try {
+            const doc = w.document;
+            if (!doc) continue;
+            const $ = w.jQuery || w.$;
+            for (const el of doc.querySelectorAll('.btn-send, [class*="chat-bar"], [class*="input-container"], [class*="chat-stream"]')) {
+                try { consider(el.__view); consider(el._view); consider(el.__backboneView); } catch (e) {}
+                if ($) {
+                    try {
+                        const d = $(el).data();
+                        if (d) for (const v of Object.values(d)) consider(v);
+                    } catch (e) {}
+                }
+                // views hold __activeChat
+                let p = el;
+                for (let d = 0; p && d < 10; d++, p = p.parentElement) {
+                    try {
+                        for (const key of Object.keys(p)) {
+                            if (/activeChat|chat|view|context/i.test(key) || key.startsWith('__')) {
+                                try { consider(p[key]); } catch (e) {}
+                            }
+                        }
+                    } catch (e) {}
+                }
+            }
+        } catch (e) {}
+    }
+
+    let guard = 0;
+    while (q.length && guard++ < 10000) {
+        const o = q.shift();
+        try {
+            // Perfect match — stop early
+            if (typeof o.handleWhisperAttempt === 'function' && typeof o.sendMessage === 'function') {
+                __cacheActiveChat(o);
+                return o;
+            }
+            if (o.__activeChat) consider(o.__activeChat);
+            if (o.__serviceProvider) consider(o.__serviceProvider);
+            if (o.serviceProvider) consider(o.serviceProvider);
+            if (typeof o.get === 'function' && typeof o.register === 'function') {
+                try { consider(o.get('activeChat')); } catch (e) {}
+            }
+            if (guard < 6000) {
+                let keys = [];
+                try { keys = Object.keys(o); } catch (e) {
+                    try { keys = Object.getOwnPropertyNames(o); } catch (e2) {}
+                }
+                for (const k of keys.slice(0, 100)) {
+                    if (/chat|service|provider|participant|messageTarget|manager|context|room|scene|policy/i.test(k) || k.startsWith('__')) {
+                        try { consider(o[k]); } catch (e) {}
+                    }
+                }
+            }
+        } catch (e) {}
+    }
+
+    if (best) __cacheActiveChat(best);
+    return best;
+}
+function __nodeCid(node) {
+    if (!node) return '';
+    try {
+        if (typeof node.get === 'function') {
+            const a = node.get('legacy_cid');
+            if (a != null && a !== '') return String(a);
+            const b = node.get('cid');
+            if (b != null && b !== '') return String(b);
+        }
+    } catch (e) {}
+    try {
+        if (node.legacy_cid != null) return String(node.legacy_cid);
+        if (node.cid != null) return String(node.cid);
+        if (node.attributes) {
+            if (node.attributes.legacy_cid != null) return String(node.attributes.legacy_cid);
+            if (node.attributes.cid != null) return String(node.attributes.cid);
+        }
+    } catch (e) {}
+    return '';
+}
+function __nodeId(node) {
+    if (!node) return '';
+    try {
+        if (typeof node.get === 'function') {
+            const id = node.get('id');
+            if (id != null) return String(id);
+        }
+    } catch (e) {}
+    try { return String(node.id || (node.attributes && node.attributes.id) || ''); } catch (e) { return ''; }
+}
+function __nodeDisplayName(node) {
+    if (!node) return '';
+    try {
+        if (typeof node.get === 'function') {
+            const n = node.get('display_name') || node.get('username') || node.get('name');
+            if (n) return String(n);
+        }
+    } catch (e) {}
+    try {
+        return String(node.display_name || node.username || (node.attributes && node.attributes.display_name) || '');
+    } catch (e) { return ''; }
+}
+function __cidMatches(uid, node) {
+    const u = String(uid || '').trim();
+    if (!u || !node) return false;
+    const cid = __nodeCid(node);
+    if (cid && cid === u) return true;
+    const id = __nodeId(node);
+    if (!id) return false;
+    if (id === u) return true;
+    if (id.includes('user-' + u)) return true;
+    if (id.endsWith('/' + u) || id.endsWith('-' + u)) return true;
+    // api.imvu.com/user/user-12345
+    const m = id.match(/user[_/-](\d+)/i);
+    if (m && m[1] === u) return true;
+    return false;
+}
+function __takeModels(coll, out) {
+    if (!coll || !out) return;
+    try {
+        if (coll.models && coll.models.length != null) {
+            for (const m of coll.models) out.push(m);
+            return;
+        }
+        if (Array.isArray(coll)) {
+            for (const m of coll) out.push(m);
+            return;
+        }
+        if (typeof coll.each === 'function') {
+            coll.each(function (m) { out.push(m); });
+            return;
+        }
+        if (typeof coll.forEach === 'function') coll.forEach(function (m) { out.push(m); });
+    } catch (e) {}
+}
+/** Live rooms: getParticipants() returns an EMPTY collection. Real list is __participants on policy/scene. */
+function __chatRelatedRoots(chat) {
+    const roots = [];
+    const seen = new Set();
+    function add(o) {
+        if (!o || typeof o !== 'object') return;
+        try { if (seen.has(o)) return; seen.add(o); roots.push(o); } catch (e) {}
+    }
+    add(chat);
+    try { add(chat.__policyChat); } catch (e) {}
+    try { if (typeof chat._getPolicy === 'function') add(chat._getPolicy()); } catch (e) {}
+    try { add(chat.__chatScene); } catch (e) {}
+    try { if (typeof chat.getScene === 'function') add(chat.getScene()); } catch (e) {}
+    try { add(chat.chatModel); } catch (e) {}
+    try { add(chat.__roomModel); } catch (e) {}
+    try {
+        for (const k of Object.keys(chat)) {
+            try {
+                const v = chat[k];
+                if (!v || typeof v !== 'object') continue;
+                if (v.__participants || typeof v.__getParticipantNodeByLegacyCid === 'function' ||
+                    typeof v.__getParticipantNodeByKey === 'function' || v.chatModel)
+                    add(v);
+            } catch (e) {}
+        }
+    } catch (e) {}
+    return roots;
+}
+function __participantModels(chat) {
+    const out = [];
+    const seen = new Set();
+    function pushAll(coll) {
+        const tmp = [];
+        __takeModels(coll, tmp);
+        for (const m of tmp) {
+            try {
+                if (seen.has(m)) continue;
+                seen.add(m);
+                out.push(m);
+            } catch (e) { out.push(m); }
+        }
+    }
+    for (const root of __chatRelatedRoots(chat)) {
+        try { pushAll(root.__participants); } catch (e) {}
+        try { pushAll(root.participants); } catch (e) {}
+        try { pushAll(root.__userCollection); } catch (e) {}
+        try { pushAll(root.__participantsCollection); } catch (e) {}
+        try {
+            if (typeof root.getParticipants === 'function') {
+                const p = root.getParticipants();
+                // ignore empty placeholder collections and promises here
+                if (p && typeof p.then !== 'function') {
+                    const n = p.models ? p.models.length : 0;
+                    if (n > 0) pushAll(p);
+                }
+            }
+        } catch (e) {}
+        try { if (root.get) pushAll(root.get('participants')); } catch (e) {}
+    }
+    return out;
+}
+function __findParticipantHelpers() {
+    const found = [];
+    const seen = new Set();
+    function add(o) {
+        if (!o || typeof o !== 'object') return;
+        try {
+            if (seen.has(o)) return;
+            seen.add(o);
+        } catch (e) { return; }
+        try {
+            if (typeof o.__getParticipantNodeByLegacyCid === 'function' ||
+                typeof o.__getParticipantNodeByKey === 'function' ||
+                (o.__participants && o.__participants.models))
+                found.push(o);
+        } catch (e) {}
+    }
+    for (const w of __imvuAllWindows()) {
+        try {
+            for (const k of Object.getOwnPropertyNames(w)) {
+                try { add(w[k]); } catch (e) {}
+            }
+        } catch (e) {}
+        try {
+            const doc = w.document;
+            if (!doc) continue;
+            for (const el of doc.querySelectorAll('[class*="chat"], [class*="scene"], [class*="room"], .btn-send')) {
+                try {
+                    add(el.__view); add(el._view);
+                    if (w.jQuery || w.$) {
+                        const $ = w.jQuery || w.$;
+                        const d = $(el).data();
+                        if (d) for (const v of Object.values(d)) add(v);
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+    }
+    return found;
+}
+/** Deep-scan object graph for participant collections / lookup helpers. */
+function __deepFindParticipantSources(root, maxDepth) {
+    const helpers = [];
+    const collections = [];
+    const seen = new Set();
+    const limit = maxDepth || 6;
+    function walk(o, depth) {
+        if (!o || depth > limit) return;
+        if (typeof o !== 'object' && typeof o !== 'function') return;
+        try {
+            if (seen.has(o)) return;
+            seen.add(o);
+        } catch (e) { return; }
+        try {
+            if (typeof o.__getParticipantNodeByLegacyCid === 'function' ||
+                typeof o.__getParticipantNodeByKey === 'function')
+                helpers.push(o);
+        } catch (e) {}
+        try {
+            if (o.__participants && o.__participants.models && o.__participants.models.length > 0)
+                collections.push(o.__participants);
+            // collection of participant models directly
+            if (o.models && o.models.length > 0 && o.models[0] && (o.models[0].node || o.models[0].attributes))
+                collections.push(o);
+        } catch (e) {}
+        if (depth >= limit) return;
+        let keys = [];
+        try { keys = Object.keys(o); } catch (e) {
+            try { keys = Object.getOwnPropertyNames(o); } catch (e2) { return; }
+        }
+        for (const k of keys) {
+            if (k === 'el' || k === '$el' || k === 'window' || k === 'document' || k === 'parent' || k === 'top') continue;
+            try { walk(o[k], depth + 1); } catch (e) {}
+        }
+    }
+    walk(root, 0);
+    return { helpers: helpers, collections: collections };
+}
+function __nodeFromParticipantModel(m) {
+    if (!m) return null;
+    try {
+        if (m.node) return m.node;
+        if (typeof m.get === 'function') {
+            const n = m.get('node');
+            if (n) return n;
+        }
+    } catch (e) {}
+    return m;
+}
+function __matchNodeInCollection(coll, uidStr) {
+    if (!coll) return null;
+    const models = coll.models || (Array.isArray(coll) ? coll : []);
+    for (const m of models) {
+        try {
+            const node = __nodeFromParticipantModel(m);
+            if (!node) continue;
+            const attrs = node.attributes || {};
+            let cid = attrs.legacy_cid;
+            if (cid == null && typeof node.get === 'function') {
+                try { cid = node.get('legacy_cid'); } catch (e) {}
+            }
+            if (cid != null && String(cid) === uidStr) return node;
+            if (__cidMatches(uidStr, node)) return node;
+            // also match on edge participant wrappers
+            try {
+                if (m.edge && m.edge.node) {
+                    const en = m.edge.node;
+                    if (__cidMatches(uidStr, en)) return en;
+                }
+            } catch (e) {}
+        } catch (e) {}
+    }
+    return null;
+}
+/** Minimal Backbone-like user node so handleWhisperAttempt can target a cid without a list hit. */
+function __syntheticUserNode(userId, displayName) {
+    const uidNum = parseInt(String(userId || ''), 10);
+    const uidStr = String(userId || '').trim();
+    const id = 'https://api.imvu.com/user/user-' + uidStr;
+    const attrs = {
+        legacy_cid: isNaN(uidNum) ? uidStr : uidNum,
+        display_name: displayName || ('user' + uidStr),
+        id: id
+    };
+    return {
+        id: id,
+        attributes: attrs,
+        get: function (key) {
+            if (key === 'id') return this.id;
+            return this.attributes[key];
+        },
+        toJSON: function () { return Object.assign({ id: this.id }, this.attributes); }
+    };
+}
+/** Prefer IMVU helpers that return participant by legacy_cid (async). */
+async function __resolveParticipantNode(chat, userId, displayName) {
+    const uidNum = parseInt(String(userId || ''), 10);
+    const uidStr = String(userId || '').trim();
+
+    // 1) Deep search from activeChat + window-level helpers
+    const sources = __deepFindParticipantSources(chat, 7);
+    for (const h of __findParticipantHelpers()) sources.helpers.push(h);
+    for (const root of __chatRelatedRoots(chat)) {
+        const more = __deepFindParticipantSources(root, 5);
+        for (const h of more.helpers) sources.helpers.push(h);
+        for (const c of more.collections) sources.collections.push(c);
+    }
+    // also deep-scan a few global window objects
+    for (const w of __imvuAllWindows()) {
+        try {
+            if (w.IMVU) {
+                const more = __deepFindParticipantSources(w.IMVU, 4);
+                for (const h of more.helpers) sources.helpers.push(h);
+                for (const c of more.collections) sources.collections.push(c);
+            }
+        } catch (e) {}
+    }
+
+    for (const root of sources.helpers) {
+        try {
+            if (typeof root.__getParticipantNodeByLegacyCid === 'function' && !isNaN(uidNum)) {
+                const part = await root.__getParticipantNodeByLegacyCid(uidNum);
+                if (part) {
+                    if (part.node) return part.node;
+                    if (typeof part.get === 'function' || part.attributes) return part;
+                }
+            }
+        } catch (e) {}
+        try {
+            if (typeof root.__getParticipantNodeByKey === 'function' && !isNaN(uidNum)) {
+                const part = await root.__getParticipantNodeByKey('legacy_cid', uidNum);
+                if (part && part.node) return part.node;
+                if (part) return part;
+            }
+        } catch (e) {}
+    }
+
+    for (const coll of sources.collections) {
+        const hit = __matchNodeInCollection(coll, uidStr);
+        if (hit) return hit;
+    }
+
+    // Edge collection on chatModel (classic rooms)
+    for (const root of __chatRelatedRoots(chat)) {
+        try {
+            const model = root.chatModel || root.__chatModel;
+            if (model && typeof model.getEdgeCollection === 'function') {
+                let coll = model.getEdgeCollection('participants');
+                if (coll && typeof coll.populated === 'function') coll = await coll.populated();
+                const hit = __matchNodeInCollection(coll, uidStr);
+                if (hit) return hit;
+            }
+        } catch (e) {}
+    }
+
+    // Sync scan
+    const sync = __participantNodeByCid(chat, userId, displayName);
+    if (sync) return sync;
+
+    // Last resort: synthetic node from join uId + name (same fields handleWhisperAttempt reads)
+    if (uidStr) return __syntheticUserNode(uidStr, displayName);
+    return null;
+}
+function __nodeFromModel(m) {
+    if (!m) return null;
+    try {
+        if (m.node) return m.node;
+        if (typeof m.get === 'function') {
+            const n = m.get('node');
+            if (n) return n;
+        }
+    } catch (e) {}
+    // model itself may be the user node
+    if (typeof m.get === 'function' && (__nodeCid(m) || __nodeId(m))) return m;
+    return m;
+}
+function __participantNodeByCid(chat, userId, displayName) {
+    const uid = String(userId || '').trim();
+    const wantName = foldImvuName(displayName || '');
+    if (!chat) return null;
+
+    const models = __participantModels(chat);
+    for (const m of models) {
+        try {
+            const node = __nodeFromModel(m);
+            if (!node) continue;
+            if (uid && __cidMatches(uid, node)) return node;
+        } catch (e) {}
+    }
+    // Fallback: display name (joiners rename often — only if unique-ish match)
+    if (wantName) {
+        let hit = null, hits = 0;
+        for (const m of models) {
+            try {
+                const node = __nodeFromModel(m);
+                const nm = foldImvuName(__nodeDisplayName(node));
+                if (nm && (nm === wantName || nm.includes(wantName) || wantName.includes(nm))) {
+                    hit = node; hits++;
+                }
+            } catch (e) {}
+        }
+        if (hits === 1) return hit;
+    }
+    try {
+        if (typeof chat.getParticipant === 'function') {
+            const n = chat.getParticipant(uid) || chat.getParticipant(Number(uid));
+            if (n) return n.node || n;
+        }
+    } catch (e) {}
+    return null;
+}
+function __listParticipantCids(chat, limit) {
+    const lim = limit || 12;
+    const rows = [];
+    for (const m of __participantModels(chat).slice(0, lim)) {
+        try {
+            const node = __nodeFromModel(m);
+            rows.push(__nodeCid(node) + ':' + __nodeDisplayName(node).slice(0, 24) + ' id=' + __nodeId(node).slice(-40));
+        } catch (e) {}
+    }
+    return 'n=' + __participantModels(chat).length + ' sample=[' + rows.join(' | ') + ']';
+}
+function __findChatBar(chat) {
+    const seen = new Set();
+    const q = [];
+    let best = null;
+    function add(o) {
+        if (!o || typeof o !== 'object') return;
+        try { if (seen.has(o)) return; seen.add(o); q.push(o); } catch (e) {}
+    }
+    function scoreBar(o) {
+        let s = 0;
+        try {
+            if (typeof o.__send === 'function') s += 50;
+            if (typeof o.set === 'function') s += 20;
+            if (typeof o.get === 'function') s += 10;
+            if (o.__textarea) s += 20;
+            if (o.__activeChat === chat) s += 40;
+            if (o.className === 'chat-bar' || (o.el && /chat-bar/i.test(o.el.className || ''))) s += 15;
+            if (o.uiContextName && /chat_bar/i.test(o.uiContextName)) s += 25;
+        } catch (e) {}
+        return s;
+    }
+    add(chat);
+    for (const w of __imvuAllWindows()) {
+        try {
+            const $ = w.jQuery || w.$;
+            for (const el of w.document.querySelectorAll(
+                '.chat-bar, [class*="chat-bar"], .btn-send, .btn-send.whisper, textarea.input-text, .input-text, [class*="input-container"], .whisper-close, [class*="whisper-cancel"]'
+            )) {
+                try {
+                    add(el.__view); add(el._view); add(el.__backboneView); add(el.view);
+                    // walk element own props for view refs
+                    for (const k of Object.keys(el)) {
+                        if (k.length > 48) continue;
+                        try { add(el[k]); } catch (e) {}
+                    }
+                    if ($) {
+                        try {
+                            const d = $(el).data();
+                            if (d) for (const v of Object.values(d)) add(v);
+                            // some builds store view on closest chat-bar
+                            const $bar = $(el).closest('.chat-bar, [class*="chat-bar"]');
+                            if ($bar.length) {
+                                const bd = $bar.data();
+                                if (bd) for (const v of Object.values(bd)) add(v);
+                            }
+                        } catch (e) {}
+                    }
+                } catch (e) {}
+            }
+        } catch (e) {}
+    }
+    let guard = 0;
+    let bestScore = 0;
+    while (q.length && guard++ < 6000) {
+        const o = q.shift();
+        try {
+            const sc = scoreBar(o);
+            if (sc >= 50 && sc > bestScore) {
+                bestScore = sc;
+                best = o;
+                if (sc >= 100) return o;
+            }
+            if (o.__activeChat) add(o.__activeChat);
+            if (o.__serviceProvider) add(o.__serviceProvider);
+            if (o.el) add(o.el);
+            if (o.$el && o.$el[0]) add(o.$el[0]);
+            for (const k of Object.keys(o).slice(0, 50)) {
+                if (/bar|footer|input|chat|menu|context|textarea|send/i.test(k) || k.startsWith('__')) {
+                    try { add(o[k]); } catch (e) {}
+                }
+            }
+        } catch (e) {}
+    }
+    return best;
+}
+/** When Backbone view is not found: type into open whisper bar DOM and submit. */
+function __domWhisperUi() {
+    for (const w of __imvuAllWindows()) {
+        try {
+            const doc = w.document;
+            const close = doc.querySelector(
+                '.whisper-close, span.whisper-close, [class*="whisper-close"], .whisper-cancel-bar, [class*="whisper-cancel"]'
+            );
+            let root = null;
+            if (close) {
+                root = close.closest('.chat-bar') ||
+                    close.closest('[class*="chat-bar"]') ||
+                    close.closest('[class*="input-container"]') ||
+                    close.parentElement;
+            }
+            if (!root) root = doc.querySelector('.chat-bar, [class*="chat-bar"]');
+            let ta = root ? root.querySelector('textarea, input:not([type="hidden"]), [contenteditable="true"]') : null;
+            if (!ta) ta = doc.querySelector('textarea.input-text, .chat-bar textarea, [class*="chat-bar"] textarea');
+            let btn = root ? root.querySelector('.btn-send, button.btn-send, button[type="submit"]') : null;
+            if (!btn) btn = doc.querySelector('.btn-send.whisper, .chat-bar .btn-send, button.btn-send');
+            const closeBtn = close ||
+                (root && root.querySelector('.whisper-close, [class*="whisper-close"]')) ||
+                doc.querySelector('.whisper-close, [class*="whisper-close"]');
+            if (ta || btn) {
+                return { win: w, doc: doc, root: root, ta: ta, btn: btn, closeBtn: closeBtn };
+            }
+        } catch (e) {}
+    }
+    return null;
+}
+function __setInputValue(el, text) {
+    if (!el) return false;
+    try { el.focus(); } catch (e) {}
+    try {
+        if (el.isContentEditable) {
+            el.textContent = text;
+        } else {
+            const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+            const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+            if (desc && desc.set) desc.set.call(el, text);
+            else el.value = text;
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        try {
+            el.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
+        } catch (e) {}
+        return true;
+    } catch (e) { return false; }
+}
+function __pressEnter(el) {
+    if (!el) return;
+    const opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+    try { el.dispatchEvent(new KeyboardEvent('keydown', opts)); } catch (e) {}
+    try { el.dispatchEvent(new KeyboardEvent('keypress', opts)); } catch (e) {}
+    try { el.dispatchEvent(new KeyboardEvent('keyup', opts)); } catch (e) {}
+}
+function __domSendWhisperText(text) {
+    const ui = __domWhisperUi();
+    if (!ui || !ui.ta) return 'no-dom-input';
+    if (!__setInputValue(ui.ta, text)) return 'dom-set-failed';
+    // ExpandingChatBar listens for Enter on the textarea
+    __pressEnter(ui.ta);
+    if (ui.btn) {
+        try {
+            ui.btn.disabled = false;
+            ui.btn.removeAttribute('disabled');
+        } catch (e) {}
+        try { ui.btn.click(); } catch (e) {}
+    }
+    // form submit fallback
+    try {
+        const form = ui.ta.closest('form');
+        if (form && form.requestSubmit) form.requestSubmit();
+    } catch (e) {}
+    return 'ok-dom';
+}
+function __domCloseWhisperBar() {
+    const ui = __domWhisperUi();
+    if (ui && ui.closeBtn) {
+        try { ui.closeBtn.click(); return 'closed-dom'; } catch (e) {}
+    }
+    for (const w of __imvuAllWindows()) {
+        try {
+            const doc = w.document;
+            for (const el of doc.querySelectorAll(
+                '.whisper-close, span.whisper-close, [class*="whisper-close"], [class*="whisper-cancel"] button, [class*="whisper-cancel"]'
+            )) {
+                try {
+                    const r = el.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {
+                        el.click();
+                        return 'closed-dom';
+                    }
+                } catch (e) {}
+            }
+            // Escape on input
+            const ta = doc.querySelector('textarea.input-text, .chat-bar textarea');
+            if (ta) {
+                ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
+            }
+        } catch (e) {}
+    }
+    return 'close-miss';
+}
+function __isInWhisperMode(chat) {
+    if (!chat) return false;
+    try {
+        if (typeof chat.inWhisperMode === 'function') return !!chat.inWhisperMode();
+    } catch (e) {}
+    try {
+        if (typeof chat.get === 'function') {
+            const t = chat.get('messageTarget');
+            if (t && (t.cid != null || t.node || t.displayName)) return true;
+        }
+    } catch (e) {}
+    try {
+        const t = chat.attributes && chat.attributes.messageTarget;
+        if (t && (t.cid != null || t.node)) return true;
+    } catch (e) {}
+    try {
+        if (chat.messageTarget && (chat.messageTarget.cid != null || chat.messageTarget.node)) return true;
+    } catch (e) {}
+    // DOM: whisper bar open
+    try {
+        if (__domWhisperUi() && (__domWhisperUi().closeBtn || document.querySelector('.btn-send.whisper, [class*="whisper-cancel"]')))
+            return true;
+    } catch (e) {}
+    return false;
+}
+function __delay(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+/**
+ * Live rooms: getParticipants() is empty; use __participants / __getParticipantNodeByLegacyCid.
+ * Result is always written to window.__imvuWhisperResult as a plain string (WebView2
+ * often serializes Promise results as {} — so we never return a Promise to the host).
+ */
+async function silentWhisperTryOnce(userId, text, displayName) {
+    try {
+        const msg = String(text || '');
+        if (!msg) return 'empty-message';
+        const chat = __findActiveChat();
+        if (!chat) return 'no-active-chat';
+
+        // Re-resolve chat preferring handleWhisperAttempt (cached object may be incomplete).
+        let chatObj = chat;
+        if (typeof chatObj.handleWhisperAttempt !== 'function') {
+            // Clear bad cache and search again
+            try { window.__imvuCompanionActiveChat = null; } catch (e) {}
+            try { if (window.top) window.top.__imvuCompanionActiveChat = null; } catch (e) {}
+            const better = __findActiveChat();
+            if (better) chatObj = better;
+        }
+
+        const methods = __chatMethodList(chatObj);
+        let node = await __resolveParticipantNode(chatObj, userId, displayName);
+        if (!node) {
+            return 'no-participant:' + (userId || '?') + ' ' + __listParticipantCids(chatObj, 8) + ' methods=[' + methods + ']';
+        }
+
+        const cid = Number(userId) || userId;
+        const dn = displayName || __nodeDisplayName(node) || '';
+        const target = { cid: cid, displayName: dn, node: node };
+        let modeHow = '';
+
+        // Open whisper mode (menu path). Do NOT use sendMessage — that is public/system chat.
+        if (typeof chatObj.handleWhisperAttempt === 'function') {
+            try {
+                const r = chatObj.handleWhisperAttempt(node);
+                if (r && typeof r.then === 'function') await r;
+                modeHow = 'handleWhisperAttempt';
+            } catch (e) {
+                modeHow = 'handleWhisperAttempt-err:' + (e && e.message ? e.message : e);
+            }
+        }
+        if (!__isInWhisperMode(chatObj) && typeof chatObj.set === 'function') {
+            try {
+                chatObj.set('messageTarget', target);
+                if (typeof chatObj.trigger === 'function') {
+                    chatObj.trigger('change:messageTarget', chatObj, target);
+                    chatObj.trigger('startWhisper');
+                }
+                modeHow = modeHow ? modeHow + '+set' : 'set-messageTarget';
+            } catch (e) {
+                return 'whisper-target-error:' + (e && e.message ? e.message : String(e));
+            }
+        }
+
+        // Wait briefly for whisper mode / UI to apply
+        for (let w = 0; w < 10; w++) {
+            if (__isInWhisperMode(chatObj)) break;
+            await __delay(50);
+        }
+
+        // Wait for whisper bar UI (mode may be set before DOM updates)
+        for (let w = 0; w < 15; w++) {
+            if (__isInWhisperMode(chatObj) || __domWhisperUi()) break;
+            await __delay(80);
+        }
+
+        if (!__isInWhisperMode(chatObj) && !__domWhisperUi()) {
+            return 'whisper-mode-not-active methods=[' + methods + '] how=' + modeHow;
+        }
+
+        // Send: prefer ExpandingChatBar view; fallback to open whisper-bar DOM (type + Enter + close).
+        // Never use activeChat.sendMessage() — that posts public/system lines.
+        let sendHow = '';
+        const bar = __findChatBar(chatObj);
+        if (bar && typeof bar.__send === 'function') {
+            try {
+                if (typeof bar.set === 'function') bar.set(msg);
+                else if (bar.__textarea) {
+                    try {
+                        if (bar.__textarea.val) bar.__textarea.val(msg);
+                        else if (bar.__textarea[0]) __setInputValue(bar.__textarea[0], msg);
+                    } catch (e) {}
+                }
+                bar.__send({ preventDefault: function () {}, keyCode: 13 });
+                sendHow = 'bar-__send';
+            } catch (e) {
+                sendHow = 'bar-err:' + (e && e.message ? e.message : e);
+            }
+        }
+
+        if (!sendHow || sendHow.indexOf('err') >= 0) {
+            if (bar && typeof bar.trigger === 'function') {
+                try {
+                    bar.trigger('sendInput', { message: msg });
+                    sendHow = 'bar-sendInput';
+                } catch (e) {}
+            }
+        }
+
+        if (!sendHow || sendHow.indexOf('err') >= 0) {
+            const dom = __domSendWhisperText(msg);
+            if (dom === 'ok-dom') sendHow = 'dom';
+            else return 'no-chat-bar mode-ok how=' + modeHow + ' dom=' + dom + ' methods=[' + methods + ']';
+        }
+
+        await __delay(350);
+
+        // Close whisper bar (X) — API + DOM
+        try {
+            if (typeof chatObj.resetMessageTarget === 'function') chatObj.resetMessageTarget();
+        } catch (e) {}
+        __domCloseWhisperBar();
+        await __delay(100);
+        try {
+            if (typeof chatObj.resetMessageTarget === 'function') chatObj.resetMessageTarget();
+        } catch (e) {}
+
+        return 'ok:' + modeHow + '+' + sendHow;
+    } catch (e) {
+        return 'exception:' + (e && e.message ? e.message : String(e));
+    }
+}
+/** Fire-and-forget entry: host polls window.__imvuWhisperResult */
+function silentWhisperStart(userId, text, displayName) {
+    try {
+        window.__imvuWhisperResult = 'pending';
+        Promise.resolve()
+            .then(function () { return silentWhisperTryOnce(userId, text, displayName); })
+            .then(function (r) {
+                window.__imvuWhisperResult = (r == null || r === '') ? 'empty-result' : String(r);
+            })
+            .catch(function (e) {
+                window.__imvuWhisperResult = 'exception:' + (e && e.message ? e.message : String(e));
+            });
+        return 'started';
+    } catch (e) {
+        window.__imvuWhisperResult = 'exception:' + (e && e.message ? e.message : String(e));
+        return 'started';
+    }
+}
+function silentWhisperPoll() {
+    try {
+        const r = window.__imvuWhisperResult;
+        if (r == null || r === '') return 'pending';
+        return String(r);
+    } catch (e) {
+        return 'pending';
+    }
+}
+function silentWhisperProbe() {
+    const cached = __getCachedActiveChat();
+    const chat = cached || __findActiveChat();
+    if (!chat) {
+        let spHits = 0;
+        for (const w of __imvuAllWindows()) {
+            try {
+                for (const k of Object.getOwnPropertyNames(w)) {
+                    try {
+                        const v = w[k];
+                        if (v && typeof v.get === 'function' && typeof v.register === 'function') spHits++;
+                    } catch (e) {}
+                }
+            } catch (e) {}
+        }
+        return 'no-active-chat frames=' + __imvuAllWindows().length + ' serviceProviders~' + spHits +
+            ' hook=' + (window.__imvuCompanionHooksInstalled ? 'yes' : 'no');
+    }
+    const methods = [];
+    for (const k of ['handleWhisperAttempt', 'sendMessage', 'resetMessageTarget', 'getParticipants', 'inWhisperMode', 'set',
+        '__getParticipantNodeByLegacyCid', '__participants']) {
+        if (typeof chat[k] === 'function' || (k.startsWith('__') && chat[k])) methods.push(k);
+    }
+    let helper = 0, parts = 0;
+    for (const r of __chatRelatedRoots(chat)) {
+        try { if (typeof r.__getParticipantNodeByLegacyCid === 'function') helper++; } catch (e) {}
+        try { if (r.__participants && r.__participants.models) parts += r.__participants.models.length; } catch (e) {}
+    }
+    return (cached ? 'cached+' : 'found+') + ' methods=[' + methods.join(',') + '] helpers=' + helper +
+        ' __participants~' + parts + ' ' + __listParticipantCids(chat, 6);
+}
+""";
+
+    /// <summary>
+    /// Runs in every document/frame before page scripts. Hooks IMVU ServiceProvider.register
+    /// so we capture activeChat when the room creates it — no UI, no clicking.
+    /// </summary>
+    private const string ImvuActiveChatHookJs = """
+(function () {
+  function installOn(w) {
+    if (!w) return;
+    try {
+      if (w.__imvuCompanionHooksInstalled) {
+        // still try to read already-registered activeChat
+        try {
+          for (const k of Object.getOwnPropertyNames(w)) {
+            try {
+              const v = w[k];
+              if (v && typeof v.get === 'function') {
+                const ac = v.get('activeChat');
+                if (ac) {
+                  w.__imvuCompanionActiveChat = ac;
+                  try { if (w.top) w.top.__imvuCompanionActiveChat = ac; } catch (e) {}
+                }
+              }
+            } catch (e) {}
+          }
+        } catch (e) {}
+        return;
+      }
+      w.__imvuCompanionHooksInstalled = true;
+    } catch (e) { return; }
+
+    function capture(name, value) {
+      if (name !== 'activeChat' || !value) return;
+      try { w.__imvuCompanionActiveChat = value; } catch (e) {}
+      try { if (w.top) w.top.__imvuCompanionActiveChat = value; } catch (e) {}
+      try { if (w.parent && w.parent !== w) w.parent.__imvuCompanionActiveChat = value; } catch (e) {}
+    }
+
+    function hookRegisterFn(obj) {
+      if (!obj || obj.__imvuCompanionRegHooked) return;
+      const orig = obj.register;
+      if (typeof orig !== 'function') return;
+      obj.register = function (name, value) {
+        try { capture(name, value); } catch (e) {}
+        return orig.apply(this, arguments);
+      };
+      obj.__imvuCompanionRegHooked = true;
+    }
+
+    function scanAndHook() {
+      try {
+        if (w.IMVU) {
+          if (w.IMVU.ServiceProvider && w.IMVU.ServiceProvider.prototype)
+            hookRegisterFn(w.IMVU.ServiceProvider.prototype);
+          if (w.IMVU.serviceProvider) hookRegisterFn(w.IMVU.serviceProvider);
+        }
+      } catch (e) {}
+      try {
+        for (const k of Object.getOwnPropertyNames(w)) {
+          try {
+            const v = w[k];
+            if (!v || typeof v !== 'object') continue;
+            if (typeof v.register === 'function' && typeof v.get === 'function') {
+              hookRegisterFn(v);
+              try {
+                const ac = v.get('activeChat');
+                if (ac) capture('activeChat', ac);
+              } catch (e) {}
+            }
+            if (v.prototype && typeof v.prototype.register === 'function')
+              hookRegisterFn(v.prototype);
+          } catch (e) {}
+        }
+      } catch (e) {}
+    }
+
+    scanAndHook();
+    let n = 0;
+    const t = w.setInterval(function () {
+      scanAndHook();
+      if (++n > 180) w.clearInterval(t);
+    }, 500);
+  }
+
+  try {
+    window.__imvuCompanionInstallHooks = installOn;
+    installOn(window);
+    // same-origin chat iframes
+    try {
+      for (const f of document.querySelectorAll('iframe')) {
+        try { installOn(f.contentWindow); } catch (e) {}
+      }
+    } catch (e) {}
+  } catch (e) {}
+})();
 """;
 
     private async Task<string?> SendToImvuChatViaWebView(string text, bool whisperReply = false, string? whisperRowRef = null,
@@ -1136,63 +2487,66 @@ function proactiveWhisperReady(expectedName, botName, trustJoinMenu, trustUserId
 
         if (proactiveWhisperToUser)
         {
-            if (string.IsNullOrEmpty(whisperRowRef) && string.IsNullOrEmpty(joinUserId))
+            if (string.IsNullOrEmpty(joinUserId))
             {
-                AppendLog("Proactive whisper skipped — no join row ref or user id", LogCategory.Warning);
-                return "no-join-ref";
+                AppendLog("Proactive whisper skipped — need join uId for silent send", LogCategory.Warning);
+                return "no-join-uid";
             }
-            await SetJoinPollPausedAsync(true);
-            try
-            {
-                string? openResult = await OpenProactiveWhisperToUserAsync(whisperSpeaker, whisperRowRef, joinUserId, ct);
-                if (openResult != "ok")
-                {
-                    AppendLog("Proactive whisper open: " + (openResult ?? "js-null"), LogCategory.Warning);
-                    await ForceDismissWhisperUiAsync();
-                    return openResult ?? "js-null";
-                }
 
-                string escapedTarget = JsonSerializer.Serialize(whisperSpeaker);
-                string escapedBotName = JsonSerializer.Serialize(_botDisplayName ?? "");
-                string? preSend = await RunJsStringAsync(FindChatRootJs + ProactiveWhisperJs + $$"""
-const expected = {{escapedTarget}};
-const botName = {{escapedBotName}};
-const trustUid = {{JsonSerializer.Serialize(joinUserId ?? "")}};
-const v = proactiveWhisperReady(expected, botName, true, trustUid);
-if (v === 'ok') return 'ok:' + (whisperTargetDebug() || 'join-menu');
-return v + ':' + whisperTargetDebug();
-""", logErrors: true);
+            // Silent path via IMVU APIs. Result is polled from window.__imvuWhisperResult
+            // (returning Promises from ExecuteScriptAsync often shows up as "{}" in the host).
+            string escapedUid = JsonSerializer.Serialize(joinUserId);
+            string escapedText = JsonSerializer.Serialize(text);
+            string escapedName = JsonSerializer.Serialize(whisperSpeaker ?? "");
+            string jsBase = FindChatRootJs + ProactiveWhisperJs;
+
+            string? result = null;
+            for (int attempt = 0; attempt < 12; attempt++)
+            {
                 ct.ThrowIfCancellationRequested();
 
-                if (preSend == null || preSend.StartsWith("target-is-bot", StringComparison.Ordinal))
+                string? started = await RunJsStringAsync(jsBase + $$"""
+return silentWhisperStart({{escapedUid}}, {{escapedText}}, {{escapedName}});
+""", logErrors: true);
+                if (started != "started")
                 {
-                    AppendLog("Proactive whisper blocked: compose shows your account (styled @name = self)", LogCategory.Warning);
-                    await ForceDismissWhisperUiAsync();
-                    return "target-is-bot";
+                    result = started ?? "start-failed";
+                    break;
                 }
-                if (!preSend.StartsWith("ok:", StringComparison.Ordinal))
-                {
-                    AppendLog("Proactive whisper blocked: " + preSend, LogCategory.Warning);
-                    await ForceDismissWhisperUiAsync();
-                    return preSend;
-                }
-                string targetLabel = preSend["ok:".Length..];
-                AppendLog("Whisper compose target: " + (string.IsNullOrWhiteSpace(targetLabel) || targetLabel == "(unreadable)" ? (whisperSpeaker ?? "joiner") + " (join menu)" : targetLabel), LogCategory.Info);
 
-                await Task.Delay(500, ct);
-                await RunPublicChatSendJsAsync(text);
-                await FinishWhisperSendAsync(whisperSpeaker ?? "?", text);
-                return "ok";
+                // Poll async work (participant lookup + send)
+                for (int poll = 0; poll < 40; poll++)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    await Task.Delay(100, ct);
+                    result = await RunJsStringAsync(jsBase + "return silentWhisperPoll();", logErrors: false);
+                    if (result == null || result == "pending" || result == "{}")
+                        continue;
+                    break;
+                }
+
+                if (result == "ok" || (result != null && result.StartsWith("ok", StringComparison.Ordinal)))
+                {
+                    AppendActivityLog($"[Whisper] {whisperSpeaker ?? joinUserId} {text}", LogCategory.Whisper);
+                    return "ok";
+                }
+
+                if (result != null && result.StartsWith("no-participant:", StringComparison.Ordinal))
+                {
+                    await Task.Delay(200, ct);
+                    continue;
+                }
+
+                // Other errors — stop retrying
+                break;
             }
-            catch (OperationCanceledException)
-            {
-                await ForceDismissWhisperUiAsync();
-                throw;
-            }
-            finally
-            {
-                await SetJoinPollPausedAsync(false);
-            }
+
+            if (string.IsNullOrEmpty(result) || result == "pending" || result == "{}")
+                result = result ?? "js-null";
+
+            string? probe = await RunJsStringAsync(jsBase + "return silentWhisperProbe();", logErrors: false);
+            AppendLog("Silent whisper failed: " + result + (string.IsNullOrEmpty(probe) ? "" : " | " + probe), LogCategory.Warning);
+            return result;
         }
 
         string escapedRowRef = JsonSerializer.Serialize(whisperRowRef ?? "");
@@ -1225,107 +2579,6 @@ return 'clicked';
         await RunPublicChatSendJsAsync(text);
         await FinishWhisperSendAsync(whisperSpeaker ?? "?", text);
         return "ok";
-    }
-
-    private async Task<string?> PollProactiveWhisperMenuAsync(string jsBase, string readyAfterMenuJs, string? joinUserId, string? joinRowRef, CancellationToken ct)
-    {
-        string escapedUserId = JsonSerializer.Serialize(joinUserId ?? "");
-        string escapedJoinRef = JsonSerializer.Serialize(joinRowRef ?? "");
-        string menuProbeJs = $$"""
-return findSendAWhisperMenuItem({{escapedUserId}}, {{escapedJoinRef}}) ? 'menu-visible' : 'no-menu';
-""";
-        string menuClickJs = $$"""
-return clickSendAWhisperMenu({{escapedUserId}}, {{escapedJoinRef}});
-""";
-
-        bool menuClicked = false;
-        for (int i = 0; i < 20; i++)
-        {
-            ct.ThrowIfCancellationRequested();
-            if (!IsBotActive) return "bot-stopped";
-            await Task.Delay(menuClicked ? 200 : 250, ct);
-
-            if (menuClicked)
-            {
-                string? ready = await RunJsStringAsync(jsBase + readyAfterMenuJs, logErrors: true);
-                if (ready == "ok") return "ok";
-                if (ready is "target-is-bot" or "no-joiner-name")
-                    return ready;
-                if (ready != null && ready.StartsWith("target-mismatch", StringComparison.Ordinal))
-                    return ready;
-                continue;
-            }
-
-            string? menu = await RunJsStringAsync(jsBase + menuProbeJs, logErrors: true);
-            if (menu == "menu-visible")
-            {
-                string? clickMenu = await RunJsStringAsync(jsBase + menuClickJs, logErrors: true);
-                if (clickMenu != "menu-clicked") return clickMenu ?? "menu-click-failed";
-                menuClicked = true;
-                await Task.Delay(600, ct);
-            }
-        }
-
-        if (menuClicked)
-        {
-            string? finalReady = await RunJsStringAsync(jsBase + readyAfterMenuJs, logErrors: true);
-            if (finalReady == "ok") return "ok";
-            if (finalReady is "target-is-bot" or "no-joiner-name")
-                return finalReady;
-            return "menu-clicked-but-unverified:" + (finalReady ?? "?");
-        }
-
-        return "no-menu-item";
-    }
-
-    private async Task<string?> OpenProactiveWhisperToUserAsync(string targetUser, string? joinRowRef = null, string? joinUserId = null, CancellationToken ct = default)
-    {
-        if (string.IsNullOrEmpty(joinRowRef) && string.IsNullOrEmpty(joinUserId))
-            return "no-join-ref";
-        if (!IsBotActive)
-            return "bot-stopped";
-
-        string escapedTarget = JsonSerializer.Serialize(targetUser ?? "");
-        string escapedJoinRef = JsonSerializer.Serialize(joinRowRef ?? "");
-        string escapedUserId = JsonSerializer.Serialize(joinUserId ?? "");
-        string escapedBotName = JsonSerializer.Serialize(_botDisplayName ?? "");
-        string jsBase = FindChatRootJs + ProactiveWhisperJs;
-        string readyAfterMenuJs = $$"""
-const expected = {{escapedTarget}};
-const botName = {{escapedBotName}};
-return proactiveWhisperReady(expected, botName, true, {{escapedUserId}});
-""";
-
-        ct.ThrowIfCancellationRequested();
-        await ForceDismissWhisperUiAsync();
-        await Task.Delay(200, ct);
-
-        string? clickResult = await RunJsStringAsync(jsBase + $$"""
-return clickJoinAvatarForWhisper({{escapedJoinRef}}, {{escapedUserId}}, {{escapedTarget}}, {{escapedBotName}});
-""", logErrors: true);
-
-        if (clickResult == null || !clickResult.StartsWith("avatar-clicked", StringComparison.Ordinal))
-        {
-            AppendLog("Whisper click [join-avatar]: " + (clickResult ?? "js-null"), LogCategory.Warning);
-            return clickResult ?? "click-failed";
-        }
-
-        AppendLog("Whisper click [join-avatar] → user menu " + clickResult, LogCategory.Info);
-        await Task.Delay(450, ct);
-        string? pollResult = await PollProactiveWhisperMenuAsync(jsBase, readyAfterMenuJs, joinUserId, joinRowRef, ct);
-        if (pollResult == "ok")
-        {
-            AppendLog("Whisper opened via join-avatar (uid=" + (joinUserId ?? "?") + ")", LogCategory.Info);
-            return "ok";
-        }
-
-        if (pollResult is "target-is-bot")
-            AppendLog("Whisper [join-avatar] opened self — wrong target", LogCategory.Warning);
-        else
-            AppendLog("Whisper [join-avatar]: " + pollResult, LogCategory.Warning);
-
-        await ForceDismissWhisperUiAsync();
-        return pollResult ?? "no-menu-item";
     }
 
     private async Task FinishWhisperSendAsync(string targetName, string message)
@@ -1715,10 +2968,33 @@ if (window._o) { try { window._o.disconnect(); } catch(e){} window._o = null; }
         if (!IsWebViewReady) return;
         string url = ImvuWebView.CoreWebView2.Source;
         _observerBoundUrl = url;
+
+        // Capture activeChat from top + same-origin iframes (room UI is often framed).
+        await RunJsVoidAsync(ImvuActiveChatHookJs + """
+try {
+  if (typeof window.__imvuCompanionInstallHooks === 'function') {
+    for (const f of document.querySelectorAll('iframe')) {
+      try { window.__imvuCompanionInstallHooks(f.contentWindow); } catch (e) {}
+    }
+  }
+  for (const f of document.querySelectorAll('iframe')) {
+    try {
+      const ac = f.contentWindow && f.contentWindow.__imvuCompanionActiveChat;
+      if (ac) { window.__imvuCompanionActiveChat = ac; break; }
+    } catch (e) {}
+  }
+} catch (e) {}
+""", logErrors: false);
+
         bool ok = await RunJsVoidAsync(ChatObserverJs, logErrors: true);
         var hint = await RunJsStringAsync("return window._lastChatContainer || '';", logErrors: true);
         AppendLog(ok ? "Observer installed — " + (string.IsNullOrEmpty(hint) ? "(no container hint)" : hint)
                       : "Observer FAILED to install — check JS error above", LogCategory.Info);
+
+        var probe = await RunJsStringAsync(FindChatRootJs + ProactiveWhisperJs + "return silentWhisperProbe();", logErrors: false);
+        if (!string.IsNullOrEmpty(probe))
+            AppendLog("Whisper API: " + probe, LogCategory.Info);
+
         await RunChatDiagnosticsAsync();
     }
 }

@@ -15,6 +15,19 @@ Do NOT test from:
 
 When ready to ship a new version to testers:
 
-  .\scripts\Publish-Release.ps1
-  .\scripts\Finish-Release-vX.Y.Z.ps1
-  (GitHub token prompted each time — not saved; scopes: repo, gist)
+  1) CONNECT GITHUB FIRST (one uninterrupted run):
+       gh auth login
+       gh auth setup-git
+     Or run preflight only:
+       .\scripts\Preflight-GitHub.ps1
+
+  2) One-shot (recommended — preflight + build + push + release + gist):
+       .\scripts\Ship-Release.ps1
+
+  Manual steps instead:
+       .\scripts\Publish-Release.ps1
+       git add -A && git commit -m "Release vX.Y.Z" && git push
+       git tag vX.Y.Z && git push origin vX.Y.Z
+       .\scripts\Finish-Release.ps1
+
+  Scopes needed: repo, gist

@@ -139,6 +139,10 @@ public partial class MainWindow : Window
     private DispatcherTimer? _pollTimer;   // for native OCR polling on selected window
 
     private bool _botRunning = false;
+    /// <summary>Bot was started but room is gone — processing/timer paused; resume on re-enter without reset.</summary>
+    private bool _botPausedNoRoom;
+    private DateTime _lastRoomCheckUtc = DateTime.MinValue;
+    private bool _isShuttingDown;
     private readonly HashSet<string> _seenLines = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _greetedUserIds = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _joinSkipCounts = new(StringComparer.Ordinal);
@@ -230,6 +234,11 @@ public partial class MainWindow : Window
         {
             if (this.Height < this.MinHeight) this.Height = this.MinHeight;
             if (this.Width < this.MinWidth) this.Width = this.MinWidth;
+
+            // Title-bar X closes the app (same clean shutdown as Exit). Layout is saved on close.
+            this.Closing += MainWindow_Closing;
+            RestoreUiLayout();
+
             this.Show(); this.Activate();
 
             LogBox.Document = new FlowDocument { PagePadding = new Thickness(4) };
@@ -237,15 +246,17 @@ public partial class MainWindow : Window
             File.AppendAllText(@"C:\Users\serve\imvu_companion_crash.log", $"[{DateTime.Now}] LOADED: Web structured DOM (no Classic :/name:text) + internal profile launch for simple no-relogin. Event only. Cleanup done.\n\n");
 
             _aliveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            _aliveTimer.Tick += (s, args) => { try { UpdateStatusBar(); } catch { } };
+            _aliveTimer.Tick += (s, args) =>
+            {
+                try { UpdateStatusBar(); } catch { }
+                try { _ = CheckRoomPresenceWhileBotRunningAsync(); } catch { }
+            };
             _aliveTimer.Start();
             UpdateStatusBar();
 
             _robustHeartbeatTimer = new System.Timers.Timer(1500);
             _robustHeartbeatTimer.Elapsed += (s, args) => { try { File.AppendAllText(@"C:\Users\serve\imvu_companion_crash.log", $"[{DateTime.Now:HH:mm:ss}] ROBUST: alive\n"); } catch { } };
             _robustHeartbeatTimer.Start();
-
-            this.Closing += (ss, ee) => { if (!_exiting) ee.Cancel = true; };
 
             // Load user editable messages for events like Welcoming
             LoadMessages();
@@ -300,8 +311,9 @@ public partial class MainWindow : Window
         LogCategory.Command => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFA, 0xCC, 0x15)),
         LogCategory.Sent => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x7D, 0xD3, 0xFC)),
         LogCategory.Skipped => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xCA, 0x8A, 0x04)),
-        LogCategory.Trigger => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xD5, 0xA5, 0x48)),
-        LogCategory.Whisper => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xA6, 0x7B, 0x5B)),
+        // Swapped: Trigger uses former Whisper brown; Whisper uses former Trigger gold
+        LogCategory.Trigger => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xA6, 0x7B, 0x5B)),
+        LogCategory.Whisper => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xD5, 0xA5, 0x48)),
         LogCategory.Warning => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFB, 0x92, 0x3C)),
         LogCategory.Error => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xF8, 0x71, 0x71)),
         _ => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC0, 0xC0, 0xE0))
@@ -362,6 +374,19 @@ public partial class MainWindow : Window
         if (_botSessionStartedAt.HasValue && _botSessionTimerRunning)
             _botSessionPausedElapsed = DateTime.Now - _botSessionStartedAt.Value;
         _botSessionTimerRunning = false;
+        UpdateStatusBar();
+    }
+
+    private void ResumeBotSessionTimer()
+    {
+        if (!_botSessionStartedAt.HasValue)
+        {
+            // Should not happen mid-session; keep elapsed at zero if never started
+            return;
+        }
+        // Continue from paused elapsed so timer does not reset
+        _botSessionStartedAt = DateTime.Now - _botSessionPausedElapsed;
+        _botSessionTimerRunning = true;
         UpdateStatusBar();
     }
 
@@ -902,16 +927,24 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (!await EnsureChatPageAsync()) return;
+            // a) Bot may only start when an active room is present
+            if (!await IsActiveRoomPresentAsync())
+            {
+                AppendLog("No active chat room detected. Open a room, then Start Bot.", LogCategory.Warning);
+                UpdateStatusText("No room — open a chat room first");
+                return;
+            }
 
             SetBusy(true, "Starting…");
             AppendLog("Starting bot on embedded IMVU chat…", LogCategory.Info);
 
             _observerBoundUrl = null;
             _botRunning = true;
+            _botPausedNoRoom = false;
             BotToggleBtn.Content = "Stop Bot";
             UpdateBotToggleGlow(true);
             _seenLines.Clear();
+            // Full start always resets session stats; pause-for-room does not
             ResetBotSessionStats();
             ClearJoinSessionState();
             _botCts = new CancellationTokenSource();
@@ -927,6 +960,7 @@ public partial class MainWindow : Window
         {
             AppendLog("Start error: " + ex.Message, LogCategory.Error);
             _botRunning = false;
+            _botPausedNoRoom = false;
             BotToggleBtn.Content = "Start Bot";
             UpdateBotToggleGlow(false);
             PauseBotSessionTimer();
@@ -941,6 +975,7 @@ public partial class MainWindow : Window
     private void StopBot()
     {
         _botRunning = false;
+        _botPausedNoRoom = false;
         BotToggleBtn.Content = "Start Bot";
         UpdateBotToggleGlow(false);
         _botCts?.Cancel();
@@ -959,10 +994,64 @@ public partial class MainWindow : Window
         try { await SetJoinPollPausedAsync(false); } catch { }
     }
 
+    /// <summary>
+    /// b) Left room without Stop — pause processing + timer; keep greeted/session counts.
+    /// </summary>
+    private async Task PauseBotForMissingRoomAsync()
+    {
+        if (!_botRunning || _botPausedNoRoom) return;
+        _botPausedNoRoom = true;
+        PauseBotSessionTimer();
+        try { await SetJoinPollPausedAsync(true); } catch { }
+        try { await TeardownChatObserverWebView(); } catch { }
+        AppendActivityLog("[Bot] Paused — left room (timer paused, session kept)", LogCategory.Info);
+        UpdatePageStatus();
+    }
+
+    /// <summary>
+    /// Re-entered room while bot still "started" — resume timer/observer, no reset.
+    /// </summary>
+    private async Task ResumeBotAfterRoomAsync()
+    {
+        if (!_botRunning || !_botPausedNoRoom) return;
+        if (!await IsActiveRoomPresentAsync()) return;
+
+        _botPausedNoRoom = false;
+        ResumeBotSessionTimer();
+        try
+        {
+            _observerBoundUrl = null;
+            await SetupChatObserver();
+            try { await SetJoinPollPausedAsync(false); } catch { }
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Resume observer: " + ex.Message, LogCategory.Warning);
+        }
+        AppendActivityLog("[Bot] Resumed — room detected", LogCategory.Info);
+        UpdatePageStatus();
+    }
+
+    private async Task CheckRoomPresenceWhileBotRunningAsync()
+    {
+        if (!_botRunning || !IsWebViewReady || _isShuttingDown) return;
+        // Throttle: every ~2s
+        if ((DateTime.UtcNow - _lastRoomCheckUtc).TotalSeconds < 2) return;
+        _lastRoomCheckUtc = DateTime.UtcNow;
+
+        bool room = await IsActiveRoomPresentAsync();
+        if (!room && !_botPausedNoRoom)
+            await PauseBotForMissingRoomAsync();
+        else if (room && _botPausedNoRoom)
+            await ResumeBotAfterRoomAsync();
+    }
+
     private CancellationToken BotCancellationToken =>
         _botCts?.Token ?? CancellationToken.None;
 
-    private bool IsBotActive => _botRunning && !BotCancellationToken.IsCancellationRequested;
+    /// <summary>Processing only when started, room present, and not cancelled.</summary>
+    private bool IsBotActive =>
+        _botRunning && !_botPausedNoRoom && !BotCancellationToken.IsCancellationRequested;
 
     // ===== Message templates management (strictly from one .json, nested event->lang->list<string>) =====
     private void LoadMessages()
@@ -2165,40 +2254,57 @@ public partial class MainWindow : Window
         if (!IsBotActive) return;
         if (_welcomeExtra.AsWhisper)
         {
-            if (!string.IsNullOrWhiteSpace(whisperRowRef) || !string.IsNullOrWhiteSpace(joinUserId))
-                await SendToImvuChat(extra, whisperReply: true, whisperRowRef: whisperRowRef,
-                    whisperSpeaker: joiner, proactiveWhisperToUser: true, joinUserId: joinUserId, ct: ct);
+            // Never fall back to public — welcome whisper stays private or is skipped.
+            if (string.IsNullOrWhiteSpace(whisperRowRef) && string.IsNullOrWhiteSpace(joinUserId))
+            {
+                AppendActivityLog($"[Whisper] skipped {joiner} - no join row/uid", LogCategory.Warning);
+                return;
+            }
+
+            string? whisperResult = await SendToImvuChat(extra, whisperReply: true, whisperRowRef: whisperRowRef,
+                whisperSpeaker: joiner, proactiveWhisperToUser: true, joinUserId: joinUserId, ct: ct);
+            if (whisperResult != "ok")
+                AppendActivityLog($"[Whisper] skipped (private only): {whisperResult ?? "?"}", LogCategory.Warning);
         }
         else
             await SendToImvuChat(extra, ct: ct);
     }
 
-    private async Task SendToImvuChat(string t, bool whisperReply = false, string whisperRowRef = "",
+    private async Task<string?> SendToImvuChat(string t, bool whisperReply = false, string whisperRowRef = "",
         string? whisperSpeaker = null, string? whisperCmd = null, bool proactiveWhisperToUser = false,
         string? joinUserId = null, bool requireBotActive = true, CancellationToken ct = default)
     {
         if (!IsWebViewReady)
         {
             AppendLog("IMVU browser not ready.", LogCategory.Warning);
-            return;
+            return "webview-not-ready";
         }
-        if (requireBotActive && !IsBotActive) return;
+        if (requireBotActive && !IsBotActive) return "bot-stopped";
         try
         {
             await _chatSendLock.WaitAsync(ct);
         }
-        catch (OperationCanceledException) { return; }
+        catch (OperationCanceledException) { return "cancelled"; }
         try
         {
-            if (requireBotActive && !IsBotActive) return;
+            if (requireBotActive && !IsBotActive) return "bot-stopped";
             string? result = await SendToImvuChatViaWebView(t, whisperReply, whisperRowRef, whisperSpeaker, whisperCmd, proactiveWhisperToUser, joinUserId, ct);
             if (whisperReply && result != "ok")
+            {
                 AppendLog("Whisper send issue: " + (result ?? "unknown"), LogCategory.Warning);
+                if (proactiveWhisperToUser)
+                    AppendActivityLog($"[Whisper] silent failed: {result ?? "unknown"}", LogCategory.Warning);
+            }
             if (result == "ok")
                 RegisterBotOutbound(t);
+            return result;
         }
-        catch (OperationCanceledException) { }
-        catch (Exception ex) { AppendLog("Send err: " + ex.Message, LogCategory.Error); }
+        catch (OperationCanceledException) { return "cancelled"; }
+        catch (Exception ex)
+        {
+            AppendLog("Send err: " + ex.Message, LogCategory.Error);
+            return "error:" + ex.Message;
+        }
         finally { _chatSendLock.Release(); }
     }
 
@@ -2686,21 +2792,206 @@ return results.slice(-maxLines);
 
     private void ExitButton_Click(object sender, RoutedEventArgs e)
     {
+        // For now same as X: full graceful exit (you can repurpose Exit later).
+        try { _ = GracefulExitAsync("Exit button"); }
+        catch { Environment.Exit(0); }
+    }
+
+    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        // c) Logical exit: stop bot → leave room → then allow close
+        if (_isShuttingDown || _exiting)
+            return;
+
+        e.Cancel = true;
+        _ = GracefulExitAsync("Window close");
+    }
+
+    /// <summary>
+    /// Stop bot, leave IMVU room, save layout, then exit app — not a hard kill.
+    /// </summary>
+    private async Task GracefulExitAsync(string reason)
+    {
+        if (_isShuttingDown) return;
+        _isShuttingDown = true;
         try
         {
+            AppendLog(reason + " — stopping bot and leaving room…", LogCategory.Info);
+            if (_botRunning)
+                StopBot();
+
+            await LeaveImvuRoomAsync();
+            try { SaveUiLayout(); } catch { }
+
             _exiting = true;
             _botSessionStartedAt = null;
             _sessionGreetedCount = 0;
             _botSessionTimerRunning = false;
             _botSessionPausedElapsed = TimeSpan.Zero;
-            AppendLog("Proper exit requested.");
             Application.Current.Shutdown();
         }
-        catch { Environment.Exit(0); }
+        catch (Exception ex)
+        {
+            try { File.AppendAllText(@"C:\Users\serve\imvu_companion_crash.log", $"GracefulExit: {ex}\n"); } catch { }
+            try { Environment.Exit(0); } catch { }
+        }
+    }
+
+    private const string UiLayoutFile = "ui_layout.json";
+
+    private sealed class UiLayoutState
+    {
+        public double Width { get; set; }
+        public double Height { get; set; }
+        public double CenterX { get; set; }
+        public double CenterY { get; set; }
+        public string WindowState { get; set; } = "Normal";
+        public double LeftColWidth { get; set; }
+        public double RightColWidth { get; set; }
+        public double ActivityLogHeight { get; set; }
+    }
+
+    private void SaveUiLayout()
+    {
+        try
+        {
+            double w = ActualWidth > 0 ? ActualWidth : Width;
+            double h = ActualHeight > 0 ? ActualHeight : Height;
+            double left = Left;
+            double top = Top;
+            if (WindowState != WindowState.Normal)
+            {
+                w = RestoreBounds.Width;
+                h = RestoreBounds.Height;
+                left = RestoreBounds.Left;
+                top = RestoreBounds.Top;
+            }
+
+            var state = new UiLayoutState
+            {
+                Width = w,
+                Height = h,
+                CenterX = left + w / 2,
+                CenterY = top + h / 2,
+                WindowState = WindowState.ToString(),
+                LeftColWidth = MainLeftCol?.ActualWidth ?? 0,
+                RightColWidth = MainRightCol?.ActualWidth ?? 0,
+                ActivityLogHeight = ActivityLogRow?.ActualHeight ?? 0,
+            };
+
+            string path = Path.Combine(AppContext.BaseDirectory, UiLayoutFile);
+            File.WriteAllText(path, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch { }
+    }
+
+    private void RestoreUiLayout()
+    {
+        try
+        {
+            string path = Path.Combine(AppContext.BaseDirectory, UiLayoutFile);
+            UiLayoutState? state = null;
+            if (File.Exists(path))
+                state = JsonSerializer.Deserialize<UiLayoutState>(File.ReadAllText(path));
+
+            double w = state is { Width: > 200 } ? state.Width : Width;
+            double h = state is { Height: > 200 } ? state.Height : Height;
+            w = Math.Max(w, MinWidth);
+            h = Math.Max(h, MinHeight);
+
+            // Last monitor via saved center point; always open centered on that monitor's work area
+            double cx = state?.CenterX ?? (SystemParameters.PrimaryScreenWidth / 2);
+            double cy = state?.CenterY ?? (SystemParameters.PrimaryScreenHeight / 2);
+            var wa = GetMonitorWorkAreaFromPoint(cx, cy);
+
+            Width = Math.Min(w, wa.Width);
+            Height = Math.Min(h, wa.Height);
+            Left = wa.X + (wa.Width - Width) / 2;
+            Top = wa.Y + (wa.Height - Height) / 2;
+            WindowStartupLocation = WindowStartupLocation.Manual;
+
+            if (state != null &&
+                string.Equals(state.WindowState, "Maximized", StringComparison.OrdinalIgnoreCase))
+                WindowState = WindowState.Maximized;
+
+            if (state != null && MainLeftCol != null && MainRightCol != null &&
+                state.LeftColWidth > 100 && state.RightColWidth > 100)
+            {
+                MainLeftCol.Width = new GridLength(state.LeftColWidth, GridUnitType.Pixel);
+                MainRightCol.Width = new GridLength(state.RightColWidth, GridUnitType.Pixel);
+            }
+
+            if (state != null && ActivityLogRow != null && state.ActivityLogHeight >= 72)
+                ActivityLogRow.Height = new GridLength(state.ActivityLogHeight, GridUnitType.Pixel);
+        }
+        catch
+        {
+            try
+            {
+                var wa = GetMonitorWorkAreaFromPoint(
+                    SystemParameters.PrimaryScreenWidth / 2,
+                    SystemParameters.PrimaryScreenHeight / 2);
+                Left = wa.X + (wa.Width - Width) / 2;
+                Top = wa.Y + (wa.Height - Height) / 2;
+                WindowStartupLocation = WindowStartupLocation.Manual;
+            }
+            catch { }
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WinPoint
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WinRect
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private struct MonitorInfo
+    {
+        public int Size;
+        public WinRect Monitor;
+        public WinRect Work;
+        public uint Flags;
+    }
+
+    private const uint MonitorDefaultToNearest = 2;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromPoint(WinPoint pt, uint dwFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfo lpmi);
+
+    /// <summary>Working area of the monitor that contains the given desktop point (DIP → pixel approx 1:1 for placement).</summary>
+    private static Rect GetMonitorWorkAreaFromPoint(double x, double y)
+    {
+        var pt = new WinPoint { X = (int)Math.Round(x), Y = (int)Math.Round(y) };
+        IntPtr mon = MonitorFromPoint(pt, MonitorDefaultToNearest);
+        if (mon != IntPtr.Zero)
+        {
+            var mi = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+            if (GetMonitorInfo(mon, ref mi))
+            {
+                return new Rect(
+                    mi.Work.Left,
+                    mi.Work.Top,
+                    Math.Max(200, mi.Work.Right - mi.Work.Left),
+                    Math.Max(200, mi.Work.Bottom - mi.Work.Top));
+            }
+        }
+        return new Rect(0, 0, SystemParameters.PrimaryScreenWidth, SystemParameters.PrimaryScreenHeight);
     }
 
     protected override void OnClosed(EventArgs e)
     {
+        try { SaveUiLayout(); } catch { }
         SaveMessages(); // persist any unsaved template changes
         SaveCommands();
         StopChatQueue();

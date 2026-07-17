@@ -1,5 +1,5 @@
 {
-  "version": "0.8.0",
-  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.8.0/IMVUCompanion-Setup-v0.8.0.exe",
-  "releaseNotes": "v0.8.0 — cleaner activity log, uid-based join memory, session stats (!stats + button), command triggers, dev workflow cleanup."
+  "version": "0.9.0",
+  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.0/IMVUCompanion-Setup-v0.9.0.exe",
+  "releaseNotes": "v0.9.0 — proactive join whispers (silent IMVU API path), room-aware bot (start only in room, pause on leave without reset, graceful Exit/X leave-room then quit), UI layout memory (size/splitters/monitor center), thin scrollbars, Activity Log polish, Whisper/Trigger colors."
 }

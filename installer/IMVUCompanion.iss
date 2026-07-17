@@ -1,8 +1,14 @@
 ; Inno Setup script — compile with ISCC.exe after running scripts/Publish-Release.ps1
 
-#define AppVersion "0.8.0"
+#define AppVersion "0.9.0"
 #ifndef PublishDir
 #define PublishDir "..\publish"
+#endif
+#ifndef SetupFileName
+#define SetupFileName "IMVUCompanion-Setup-v" + AppVersion
+#endif
+#ifndef OutputDirOverride
+#define OutputDirOverride "..\release"
 #endif
 
 [Setup]
@@ -17,8 +23,8 @@ AppUpdatesURL=https://github.com/BadCharmVU/IMVUCompanion/releases
 DefaultDirName={autopf}\IMVU Companion
 DefaultGroupName=IMVU Companion
 AllowNoIcons=yes
-OutputDir=..\release
-OutputBaseFilename=IMVUCompanion-Setup-v{#AppVersion}
+OutputDir={#OutputDirOverride}
+OutputBaseFilename={#SetupFileName}
 SetupIconFile=..\icon.ico
 UninstallDisplayIcon={app}\IMVUCompanion.exe
 Compression=lzma2
