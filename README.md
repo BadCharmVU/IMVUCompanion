@@ -1,73 +1,55 @@
 # IMVU Companion
 
-A Windows desktop bot for **IMVU Next** chat rooms. It runs IMVU inside the app (WebView2), greets people when they join, answers `!commands`, and can send an optional welcome whisper.
+Windows desktop companion for **IMVU Next** chat rooms. IMVU runs inside the app (WebView2). The bot can greet joiners, answer `!commands`, send optional welcome whispers, and check for updates automatically.
 
-**Current release:** v0.9.0  
-**Install (testers):** https://github.com/BadCharmVU/IMVUCompanion/releases/latest — download **`IMVUCompanion-Setup-v0.9.0.exe`** only (ignore GitHub’s auto-generated “Source code” links; those cannot be turned off).
+**Current release:** [v0.9.3](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
 
----
-
-## What it does
-
-- Embedded IMVU chat — log in and open your room in the left panel
-- Join greetings from **Message Templates** (`{name}` placeholder)
-- Optional extra welcome (public or whisper)
-- **!Commands** with categories and languages
-- **!bbot** AI hook (placeholder reply until providers are connected)
-- Activity log, English/Russian UI
-- **Auto-update** when a new installer is published on GitHub
+Download **`IMVUCompanion-Setup-v0.9.3.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
 
 ---
 
-## Requirements
+## Features
 
-- Windows 10/11
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) — for building/running from source
-- [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) — usually already installed on Windows 11
+- Embedded IMVU Next chat (login and open your room in the left panel)
+- **Welcome messages** when someone joins — public and/or whisper, with `{name}` placeholder
+- Second optional welcome line (public or whisper)
+- **!Commands** with categories and languages (English / Russian)
+- **!bbot** AI hook (providers configurable; maintenance reply when not set up)
+- Room-aware bot: works while you are in a room; pauses cleanly when you leave
+- Activity log with clear categories
+- **Auto-update** button (installed builds) — checks for newer versions and installs the Setup package
+- Window layout remembered between sessions
 
 ---
 
-## Daily development (this PC)
+## Install (testers)
 
-**Source code lives here:**
-
-`C:\Users\serve\ansel\IMVUCompanion`
-
-That folder is the working copy. GitHub (`main`) is backup/sync — not where you run the app day to day.
-
-### Run after every code change (one command)
-
-```powershell
-cd C:\Users\serve\ansel\IMVUCompanion
-.\scripts\Run-Dev.ps1
-```
-
-That script:
-
-1. Removes stale `bin\Debug`, old `publish.*`, and other unused build folders
-2. Builds **Release** (not Debug)
-3. Starts the **only** local test exe:
-
-`bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe`
-
-See also `DEV-RUN.txt` in the project root.
-
-**Do not test from** `bin\Debug`, `publish\`, or `release\` — those are not your dev build.
-
-No installer is needed while developing. **Only run `.\scripts\Publish-Release.ps1` when a version is ready for testers.**
+1. Download the latest **Setup** `.exe` from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest).
+2. Run the installer (per-user install; no admin required in the usual configuration).
+3. Launch **IMVU Companion** from the Start menu or desktop shortcut.
+4. On later versions, use the **update** control in the app when it shows a new release available.
 
 ### First-time setup in the app
 
-1. Log in to IMVU in the **left panel** (session saved under `%LOCALAPPDATA%\IMVUCompanion\WebView2`).
+1. Log in to IMVU in the **left panel** (session is saved locally).
 2. Open your chat room.
-3. Set **Bot Display Name** (AI Providers) to match your IMVU name exactly.
-4. Click **Start Bot**.
+3. Set **Bot Display Name** (AI Providers) to match your IMVU display name exactly.
+4. Configure welcome messages and `!commands` as you like.
+5. Click **Start Bot**.
 
-Use **Exit** (top-right) to close. The window **X** is disabled so the bot is not closed by accident.
+Use **Exit** in the app to close cleanly (bot stop / leave room as designed).
 
-### Config files (user data — kept across restarts and updates)
+### Windows SmartScreen
 
-Stored under `%LOCALAPPDATA%\IMVUCompanion\` (not next to the `.exe`, so rebuilds/installers never overwrite them):
+Unsigned builds may show a first-run warning: right-click the installer or app → **Properties** → **Unblock** → OK, or choose **More info** → **Run anyway**.
+
+---
+
+## Your settings are kept
+
+Welcome messages, `!commands`, AI settings, and window layout are stored under:
+
+`%LOCALAPPDATA%\IMVUCompanion\`
 
 | File | Purpose |
 |------|---------|
@@ -75,38 +57,23 @@ Stored under `%LOCALAPPDATA%\IMVUCompanion\` (not next to the `.exe`, so rebuild
 | `commands.json` | `!command` replies |
 | `ai_settings.json` | API keys and AI provider settings |
 | `ui_layout.json` | Window size / panel layout |
+| `WebView2\` | IMVU login session (browser profile) |
 
-On first run the app creates defaults (including 3 English welcome lines). Edits are saved there only. Version updates do not replace these files. Older next-to-exe copies are migrated automatically once.
-
----
-
-## When you are ready for a new release
-
-Only when **you** say so:
-
-```powershell
-cd C:\Users\serve\ansel\IMVUCompanion
-.\scripts\Publish-Release.ps1
-```
-
-Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php). Output: `release\IMVUCompanion-Setup-vX.Y.Z.exe`
-
-Then: update `version.json`, run `.\scripts\Update-VersionGist.ps1` (public update check), upload the `.exe` to GitHub Release or Gumroad.
-
-Test the installer on your **other PC** — that machine does not need the source repo.
+- Edits survive **app restarts**.
+- Installing a **new version does not replace** your custom messages or commands.
+- First run creates defaults (including sample welcome lines and sample `!commands`) if no file exists yet.
 
 ---
 
-## Sync code with GitHub
+## Requirements
 
-```powershell
-cd C:\Users\serve\ansel\IMVUCompanion
-git add -A
-git commit -m "describe your change"
-git push
-```
+- Windows 10 or 11 (64-bit)
+- [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) — usually already present on Windows 11
+- For building from source: [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 
-Clone on another dev PC:
+---
+
+## Build from source
 
 ```powershell
 git clone https://github.com/BadCharmVU/IMVUCompanion.git
@@ -114,24 +81,71 @@ cd IMVUCompanion
 dotnet build -c Release
 ```
 
+Run the built app from the project’s Release output folder (framework-dependent build under `bin\Release\...`).
+
+For day-to-day development in this repo:
+
+```powershell
+.\scripts\Run-Dev.ps1
+```
+
+That cleans temporary build folders, builds Release, and starts the local test executable.
+
+**Do not** run day-to-day from `bin\Debug`, `publish\`, or installer-only `release\` folders unless you know you need those artifacts.
+
 ---
 
-## Windows SmartScreen
+## Creating a release (maintainers)
 
-Unsigned builds may warn on first run: right-click the `.exe` → **Properties** → **Unblock** → OK.
+Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php) and [GitHub CLI](https://cli.github.com/) authenticated with `repo` and `gist` scopes.
+
+```powershell
+.\scripts\Ship-Release.ps1
+```
+
+Or step by step:
+
+```powershell
+.\scripts\Publish-Release.ps1
+# then tag, create GitHub Release with the Setup exe, update version.json gist
+```
+
+Installer output: `release\IMVUCompanion-Setup-vX.Y.Z.exe`  
+Update channel: public `version.json` gist referenced by the app (see `AppVersion.cs` / `version.json` in the repo).
 
 ---
 
-## Project layout
+## Project layout (source)
 
 | Path | Role |
 |------|------|
-| `bin\Release\net8.0-windows10.0.19041.0\` | **Local dev/test exe** (only folder you run day to day) |
-| `scripts/Run-Dev.ps1` | Build + run dev exe (use after every change) |
-| `scripts/Clean-Stale.ps1` | Remove unused Debug/publish.* folders |
-| `scripts/Publish-Release.ps1` | Build installer → `release\` (release day only) |
-| `publish\` | Self-contained app output (created by Publish-Release) |
-| `release\` | Installer `.exe` for GitHub/testers |
-| `MainWindow.WebView.cs` | Chat observer, whispers, WebView2 |
-| `MainWindow.xaml.cs` | Bot queue, greetings, commands |
-| `MainWindow.Update.cs` | Update check and upgrade |
+| `MainWindow.xaml` / `.xaml.cs` | UI, bot queue, greetings, commands |
+| `MainWindow.WebView.cs` | WebView2, chat observer, send / whisper |
+| `MainWindow.Update.cs` | Update check and apply |
+| `MainWindow.AiProviders.cs` | AI provider settings |
+| `UserDataPaths.cs` | User config location under LocalAppData |
+| `UpdateService.cs` | Version check, download, install |
+| `scripts/Run-Dev.ps1` | Local Release build + run |
+| `scripts/Clean-Stale.ps1` | Remove temporary publish/debug clutter |
+| `scripts/Publish-Release.ps1` | Self-contained publish + installer |
+| `scripts/Ship-Release.ps1` | Full ship: build, push, release, gist |
+| `installer/IMVUCompanion.iss` | Inno Setup script |
+| `version.json` | Release version / download URL for the update channel |
+
+---
+
+## Recent changes (v0.9.3)
+
+- Custom **welcome messages** and **!commands** persist across restarts and app updates
+- Fixed welcome messages resetting to defaults on every launch
+- User data isolated from the install folder so Setup never overwrites your lists
+- Dev builds no longer prompt for installer updates (installed copies still do)
+
+See [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases) for full notes per version.
+
+---
+
+## License / support
+
+Issues: [GitHub Issues](https://github.com/BadCharmVU/IMVUCompanion/issues)  
+Releases: [GitHub Releases](https://github.com/BadCharmVU/IMVUCompanion/releases)
