@@ -165,6 +165,17 @@ public partial class MainWindow
         }
         catch (Exception ex) { AppendLog("Load AI settings err: " + ex.Message, LogCategory.Warning); }
 
+        // API keys may be DPAPI-wrapped on disk; keep plaintext only in memory
+        bool hadLegacyPlain = false;
+        foreach (var kv in _aiSettings.Providers)
+        {
+            if (kv.Value == null) continue;
+            string stored = kv.Value.ApiKey ?? "";
+            if (!string.IsNullOrEmpty(stored) && !SecretProtector.IsProtected(stored))
+                hadLegacyPlain = true;
+            kv.Value.ApiKey = SecretProtector.Unprotect(stored);
+        }
+
         foreach (string name in AiProviderNames)
         {
             if (!_aiSettings.Providers.ContainsKey(name))
@@ -174,9 +185,18 @@ public partial class MainWindow
         if (string.IsNullOrWhiteSpace(_aiSettings.SelectedProvider) ||
             !AiProviderNames.Contains(_aiSettings.SelectedProvider, StringComparer.OrdinalIgnoreCase))
             _aiSettings.SelectedProvider = "Grok";
+
+        // One-time upgrade: rewrite file so keys are DPAPI-protected at rest
+        if (hadLegacyPlain)
+        {
+            try { SaveAiSettingsCore(logSuccess: false); }
+            catch { /* next explicit save will protect */ }
+        }
     }
 
-    private void SaveAiSettings()
+    private void SaveAiSettings() => SaveAiSettingsCore(logSuccess: true);
+
+    private void SaveAiSettingsCore(bool logSuccess)
     {
         try
         {
@@ -185,10 +205,32 @@ public partial class MainWindow
                 _aiSettings.BotDisplayName = BotDisplayNameBox.Text.Trim();
             _botDisplayName = _aiSettings.BotDisplayName;
 
+            // Snapshot for disk: encrypt API keys (DPAPI CurrentUser); leave in-memory plaintext
+            var disk = new AiSettings
+            {
+                SelectedProvider = _aiSettings.SelectedProvider,
+                BotDisplayName = _aiSettings.BotDisplayName,
+                Providers = new Dictionary<string, ProviderConfig>(StringComparer.OrdinalIgnoreCase)
+            };
+            foreach (var kv in _aiSettings.Providers)
+            {
+                var src = kv.Value ?? DefaultProviderConfig(kv.Key);
+                disk.Providers[kv.Key] = new ProviderConfig
+                {
+                    ApiKey = SecretProtector.Protect(src.ApiKey),
+                    Endpoint = src.Endpoint,
+                    Model = src.Model,
+                    Temperature = src.Temperature,
+                    MaxTokens = src.MaxTokens,
+                    Enabled = src.Enabled
+                };
+            }
+
             Directory.CreateDirectory(UserDataPaths.Root);
-            string json = JsonSerializer.Serialize(_aiSettings, new JsonSerializerOptions { WriteIndented = true });
+            string json = JsonSerializer.Serialize(disk, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(AiSettingsFile, json);
-            AppendLog("AI settings saved to ai_settings.json.", LogCategory.Info);
+            if (logSuccess)
+                AppendLog("AI settings saved (API keys protected with Windows DPAPI).", LogCategory.Info);
         }
         catch (Exception ex) { AppendLog("Save AI settings err: " + ex.Message, LogCategory.Error); }
     }

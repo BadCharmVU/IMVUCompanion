@@ -2321,7 +2321,7 @@ public partial class MainWindow : Window
         try
         {
             AppendLog("Scanning chat page…", LogCategory.Info);
-            var chatInfo = await RunJsStringAsync(FindChatRootJs + """
+            var chatInfo = await RunJsStringAsync(ImvuScripts.FindChatRoot + """
 const r = __imvuFindChatRoot();
 if (!r.hasStream) return 'chat-stream2 NOT FOUND (checked iframes)';
 const items = r.cont.querySelectorAll('div,li,[class*="msg"],[class*="chat-line"],[class*="message"]');
@@ -2331,7 +2331,7 @@ return 'chat-stream2 found, ~' + cnt + ' message rows';
 """, logErrors: true);
             AppendLog("Chat: " + (chatInfo ?? "?"), LogCategory.Info);
 
-            var inpInfo = await RunJsStringAsync(FindChatRootJs + """
+            var inpInfo = await RunJsStringAsync(ImvuScripts.FindChatRoot + """
 const r = __imvuFindChatRoot();
 if (!r.hasInput) return 'input-container NOT FOUND (checked iframes)';
 const ic = r.doc.querySelector('div.input-container, [class*="input-container"]');
@@ -2706,7 +2706,7 @@ return child ? 'input found: ' + child.tagName : 'input-container has no editabl
         if (!IsWebViewReady) return Array.Empty<string>();
         try
         {
-            var candidates = await RunJsStringArrayAsync(FindChatRootJs + $$"""
+            var candidates = await RunJsStringArrayAsync(ImvuScripts.FindChatRoot + $$"""
 const maxLines = {{maxLines}};
 const bad = /radio|on air|now playing|http|www\.|listen|click here|powered by|imvu.com/i;
 const cont = __imvuFindChatRoot().cont;

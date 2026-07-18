@@ -120,7 +120,13 @@ Update channel: public `version.json` gist referenced by the app (see `AppVersio
 | Path | Role |
 |------|------|
 | `MainWindow.xaml` / `.xaml.cs` | UI, bot queue, greetings, commands |
-| `MainWindow.WebView.cs` | WebView2, chat observer, send / whisper |
+| `MainWindow.WebView.cs` | WebView2 lifecycle, navigation, host messages |
+| `MainWindow.WebView.Bridge.cs` | JS execution helpers, CDP click |
+| `MainWindow.WebView.Whisper.cs` | Whisper / public send automation |
+| `MainWindow.WebView.Join.cs` | Chat observer setup, join seeding, diagnostics |
+| `Scripts/Imvu/*.js` | IMVU page scripts (edit these when IMVU DOM changes) |
+| `ImvuScripts.cs` | Loads embedded / on-disk JS modules |
+| `SecretProtector.cs` | DPAPI protection for API keys at rest |
 | `MainWindow.Update.cs` | Update check and apply |
 | `MainWindow.AiProviders.cs` | AI provider settings |
 | `UserDataPaths.cs` | User config location under LocalAppData |
