@@ -71,7 +71,7 @@ if (Test-Path $setup) {
     }
 }
 $iss = Join-Path $ProjectRoot "installer\IMVUCompanion.iss"
-& $iscc "/O$releaseDir" "/DPublishDir=$publishDefine" $iss
+& $iscc "/O$releaseDir" "/DPublishDir=$publishDefine" "/DAppVersion=$appVersion" $iss
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
 $setup = Join-Path $releaseDir $setupName
 if (Test-Path $setup) {

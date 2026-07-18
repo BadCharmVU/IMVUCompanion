@@ -1,6 +1,6 @@
 ; Inno Setup script — compile with ISCC.exe after running scripts/Publish-Release.ps1
 
-#define AppVersion "0.9.0"
+#define AppVersion "0.9.2"
 #ifndef PublishDir
 #define PublishDir "..\publish"
 #endif
@@ -51,7 +51,11 @@ Name: "{group}\{cm:UninstallProgram,IMVU Companion}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\IMVU Companion"; Filename: "{app}\IMVUCompanion.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\IMVUCompanion.exe"; Description: "{cm:LaunchProgram,IMVU Companion}"; Flags: nowait postinstall skipifsilent
+; Also run after silent auto-update (do not use skipifsilent)
+Filename: "{app}\IMVUCompanion.exe"; Description: "{cm:LaunchProgram,IMVU Companion}"; Flags: nowait postinstall
 
 [UninstallDelete]
+; User config (messages/commands/ai/layout) + WebView profile live under Local AppData
+Type: filesandordirs; Name: "{localappdata}\IMVUCompanion"
+; Legacy roaming path from older builds (if present)
 Type: filesandordirs; Name: "{userappdata}\IMVUCompanion"

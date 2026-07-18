@@ -66,9 +66,7 @@ public partial class MainWindow
                     UpdateGlow.Stop();
                     break;
                 case UpdateUiState.Available:
-                    string remote = _lastUpdateCheck?.RemoteVersion != null
-                        ? $"v{_lastUpdateCheck.RemoteVersion.Major}.{_lastUpdateCheck.RemoteVersion.Minor}"
-                        : "New";
+                    string remote = AppVersion.FormatLabel(_lastUpdateCheck?.RemoteVersion);
                     UpdateBtn.Content = $"{AppVersion.ShortLabel} → {remote} Update";
                     UpdateBtn.IsEnabled = true;
                     UpdateBtn.ToolTip = _lastUpdateCheck?.ReleaseNotes;
@@ -128,7 +126,9 @@ public partial class MainWindow
 
             if (result.UpdateAvailable)
             {
-                AppendLog($"Update available: {AppVersion.ShortLabel} → v{result.RemoteVersion?.Major}.{result.RemoteVersion?.Minor}", LogCategory.Info);
+                AppendLog(
+                    $"Update available: {AppVersion.ShortLabel} → {AppVersion.FormatLabel(result.RemoteVersion)}",
+                    LogCategory.Info);
                 if (!string.IsNullOrWhiteSpace(result.ReleaseNotes))
                     AppendLog("Release: " + result.ReleaseNotes.Trim(), LogCategory.Info);
                 SetUpdateButtonState(UpdateUiState.Available);

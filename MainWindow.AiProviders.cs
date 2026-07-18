@@ -11,7 +11,7 @@ namespace IMVUCompanion;
 
 public partial class MainWindow
 {
-    private const string AiSettingsFile = "ai_settings.json";
+    private static readonly string AiSettingsFile = UserDataPaths.GetConfigFile("ai_settings.json");
     private const string AiCommandToken = "!bbot";
     private const string AiMaintenanceReply = "Sorry, my conversation module is under maintenance.";
 
@@ -185,6 +185,7 @@ public partial class MainWindow
                 _aiSettings.BotDisplayName = BotDisplayNameBox.Text.Trim();
             _botDisplayName = _aiSettings.BotDisplayName;
 
+            Directory.CreateDirectory(UserDataPaths.Root);
             string json = JsonSerializer.Serialize(_aiSettings, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(AiSettingsFile, json);
             AppendLog("AI settings saved to ai_settings.json.", LogCategory.Info);

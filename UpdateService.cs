@@ -32,15 +32,37 @@ internal static class UpdateService
     {
         try
         {
-            var fromManifest = await TryReadVersionManifestAsync(ct);
-            if (fromManifest != null)
-                return Compare(fromManifest.Value.version, fromManifest.Value.url, fromManifest.Value.notes);
+            // Check both sources and take the highest version so a stale gist cannot hide a newer GitHub release
+            // (and vice versa). Supports 2-part (0.9) and 3-part (0.9.2) version strings.
+            (Version version, string url, string notes)? best = null;
+            string? lastError = null;
 
-            var fromRelease = await TryReadLatestReleaseAsync(ct);
-            if (fromRelease != null)
-                return Compare(fromRelease.Value.version, fromRelease.Value.url, fromRelease.Value.notes);
+            try
+            {
+                var fromManifest = await TryReadVersionManifestAsync(ct);
+                if (fromManifest != null)
+                    best = fromManifest;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex.Message;
+            }
 
-            return new UpdateCheckResult { Error = "Could not reach update server" };
+            try
+            {
+                var fromRelease = await TryReadLatestReleaseAsync(ct);
+                if (fromRelease != null && (best == null || fromRelease.Value.version > best.Value.version))
+                    best = fromRelease;
+            }
+            catch (Exception ex)
+            {
+                lastError = ex.Message;
+            }
+
+            if (best != null)
+                return Compare(best.Value.version, best.Value.url, best.Value.notes);
+
+            return new UpdateCheckResult { Error = lastError ?? "Could not reach update server" };
         }
         catch (Exception ex)
         {
@@ -50,6 +72,7 @@ internal static class UpdateService
 
     private static UpdateCheckResult Compare(Version remote, string url, string notes)
     {
+        // Compare full Version (Major.Minor.Build) so 0.9.2 is newer than 0.9.0 / 0.9
         bool available = remote > AppVersion.Current;
         return new UpdateCheckResult
         {
@@ -183,11 +206,37 @@ internal static class UpdateService
         string fileName = Path.GetFileName(newExePath);
         if (fileName.Contains("Setup", StringComparison.OrdinalIgnoreCase))
         {
+            // Wait for silent setup to finish, then launch the installed app
+            // ([Run] had skipifsilent before, so silent updates never restarted).
+            string setupDir = Path.GetDirectoryName(newExePath) ?? Path.GetTempPath();
+            string launchScript = Path.Combine(setupDir, "imvu_finish_update.cmd");
+            string localApp = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Programs", "IMVU Companion", "IMVUCompanion.exe");
+            string progFiles = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "IMVU Companion", "IMVUCompanion.exe");
+            File.WriteAllText(launchScript, $"""
+@echo off
+setlocal
+"{newExePath}" /VERYSILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /NORESTART
+if exist "{localApp}" (
+  start "" "{localApp}"
+  goto done
+)
+if exist "{progFiles}" (
+  start "" "{progFiles}"
+  goto done
+)
+:done
+del "%~f0" 2>nul
+""");
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
-                FileName = newExePath,
-                Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS",
-                UseShellExecute = true
+                FileName = launchScript,
+                UseShellExecute = true,
+                CreateNoWindow = true,
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden
             });
             return true;
         }

@@ -65,15 +65,18 @@ No installer is needed while developing. **Only run `.\scripts\Publish-Release.p
 
 Use **Exit** (top-right) to close. The window **X** is disabled so the bot is not closed by accident.
 
-### Config files (created next to the `.exe` when you run)
+### Config files (user data — kept across restarts and updates)
+
+Stored under `%LOCALAPPDATA%\IMVUCompanion\` (not next to the `.exe`, so rebuilds/installers never overwrite them):
 
 | File | Purpose |
 |------|---------|
-| `messages.json` | Greeting templates |
+| `messages.json` | Welcome / greeting templates |
 | `commands.json` | `!command` replies |
-| `ai_settings.json` | API keys — copy from `ai_settings.example.json` |
+| `ai_settings.json` | API keys and AI provider settings |
+| `ui_layout.json` | Window size / panel layout |
 
-These are not committed to git.
+On first run the app creates defaults (including 3 English welcome lines). Edits are saved there only. Version updates do not replace these files. Older next-to-exe copies are migrated automatically once.
 
 ---
 

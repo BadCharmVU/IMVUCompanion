@@ -26,4 +26,6 @@ Write-Host ""
 Write-Host 'For installers / GitHub: .\scripts\Publish-Release.ps1 (only when releasing)' -ForegroundColor DarkGray
 Write-Host ""
 
-Start-Process $exe
+# WorkingDirectory = exe folder so any leftover relative paths still resolve;
+# user config is stored under %LOCALAPPDATA%\IMVUCompanion (survives rebuilds/updates).
+Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)

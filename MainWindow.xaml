@@ -515,56 +515,79 @@
             <!-- Settings (scrollable) -->
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="0,0,0,6">
                 <StackPanel>
-                    <Expander Header="Message Templates" IsExpanded="False" Margin="0,0,0,6"
+                    <Expander Header="Welcome Settings" IsExpanded="False" Margin="0,0,0,6"
                               Background="#1E1E32" Foreground="#E0E0FF">
                         <StackPanel Margin="4">
-                            <TextBlock Text="Welcome Whisper" FontSize="10" Foreground="#A0A0C8" Margin="0,0,0,4"/>
-                            <WrapPanel Margin="0,0,0,4">
-                                <ComboBox x:Name="WelcomeExtraModeCombo" Width="120" Height="26"
-                                          SelectionChanged="WelcomeExtraModeCombo_SelectionChanged">
-                                    <ComboBoxItem Content="No Extra" Tag="none" IsSelected="True"/>
-                                    <ComboBoxItem Content="Send Extra" Tag="send"/>
-                                </ComboBox>
-                                <ComboBox x:Name="WelcomeExtraDeliveryCombo" Width="100" Height="26" Margin="6,0,0,0"
-                                          Visibility="Collapsed" SelectionChanged="WelcomeExtraDeliveryCombo_SelectionChanged">
-                                    <ComboBoxItem Content="Whisper" Tag="whisper" IsSelected="True"/>
-                                    <ComboBoxItem Content="Public" Tag="public"/>
-                                </ComboBox>
-                            </WrapPanel>
-                            <TextBox x:Name="WelcomeExtraMessageBox" Height="26" Margin="0,0,0,6"
-                                     Visibility="Collapsed" Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"
-                                     LostFocus="WelcomeExtraMessageBox_LostFocus"
-                                     ToolTip="Extra message after welcome. Use {name} for joiner name."/>
-                            <WrapPanel Margin="0,0,0,4">
-                                <ComboBox x:Name="EventCombo" Width="120" Height="26" SelectionChanged="EventCombo_SelectionChanged"/>
-                                <Button Content="Add" Click="AddMessage_Click" Margin="6,0,0,0"/>
-                                <Button Content="Delete" Click="RemoveMessage_Click" Margin="4,0,0,0"/>
-                                <Button Content="Save" Click="SaveMessages_Click" Margin="4,0,0,0"/>
-                            </WrapPanel>
-                            <WrapPanel Margin="0,0,0,4">
-                                <TextBlock Text="Event:" VerticalAlignment="Center" FontSize="10" Foreground="#A0A0C8" Margin="0,0,6,0"/>
-                                <TextBox x:Name="EventNameEditBox" Width="120" Height="26" Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"/>
-                                <Button Content="Rename" Click="RenameEvent_Click" Margin="6,0,0,0"/>
-                                <TextBox x:Name="NewEventTextBox" Width="90" Height="26" Margin="6,0,0,0" Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"/>
-                                <Button Content="+ Event" Click="AddEvent_Click" Margin="4,0,0,0"/>
-                            </WrapPanel>
-                            <Grid Margin="0,0,0,4">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="56" MinHeight="28"/>
-                                    <RowDefinition Height="4"/>
-                                </Grid.RowDefinitions>
-                                <ListBox x:Name="MessagesList" Grid.Row="0"
-                                         SelectionChanged="MessagesList_SelectionChanged"
-                                         Background="#141428" Foreground="#C0C0E0" BorderBrush="#3A3A58"
-                                         ScrollViewer.VerticalScrollBarVisibility="Auto"/>
-                                <GridSplitter Grid.Row="1" Height="4" HorizontalAlignment="Stretch"
-                                              Background="#2A2A45" ResizeDirection="Rows" ShowsPreview="True"/>
+                            <!-- Line 1: delivery for 1st welcome -->
+                            <ComboBox x:Name="Welcome1DeliveryCombo" Height="26" Margin="0,0,0,6"
+                                      HorizontalAlignment="Left" MinWidth="120"
+                                      SelectionChanged="Welcome1DeliveryCombo_SelectionChanged">
+                                <ComboBoxItem Content="Public" Tag="public" IsSelected="True"/>
+                                <ComboBoxItem Content="Whisper" Tag="whisper"/>
+                            </ComboBox>
+
+                            <!-- Line 2: 1st message list -->
+                            <ListBox x:Name="Welcome1List" Height="72" Margin="0,0,0,6"
+                                     SelectionChanged="Welcome1List_SelectionChanged"
+                                     Background="#141428" Foreground="#C0C0E0" BorderBrush="#3A3A58"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     HorizontalContentAlignment="Stretch"/>
+
+                            <!-- Line 3: edit + Add / Update / Delete -->
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="Welcome1EditBox" Grid.Column="0" Height="26" Margin="0,0,6,0"
+                                         Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"
+                                         ToolTip="Use {name} for joiner name."/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <Button Content="Add" Click="Welcome1Add_Click" Margin="0,0,4,0"/>
+                                    <Button Content="Update" Click="Welcome1Update_Click" Margin="0,0,4,0"/>
+                                    <Button Content="Delete" Click="Welcome1Delete_Click"/>
+                                </StackPanel>
                             </Grid>
-                            <WrapPanel Margin="0,6,0,0">
-                                <TextBox x:Name="MessageEditBox" Width="220" Height="26" Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"/>
-                                <Button Content="Update" Click="UpdateMessage_Click" Margin="6,0,0,0"/>
-                            </WrapPanel>
-                            <TextBlock Text="Random greeting per join. Use {name}." FontSize="9" Foreground="#707090" Margin="0,4,0,0"/>
+
+                            <!-- Line 4: 2nd Msg enable + delivery -->
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                <CheckBox x:Name="Welcome2EnabledCheck" Content="2nd Msg:"
+                                          Foreground="#C0C0E0" VerticalAlignment="Center"
+                                          Checked="Welcome2EnabledCheck_Changed"
+                                          Unchecked="Welcome2EnabledCheck_Changed"/>
+                                <ComboBox x:Name="Welcome2DeliveryCombo" Height="26" Margin="10,0,0,0"
+                                          MinWidth="120" Visibility="Collapsed"
+                                          SelectionChanged="Welcome2DeliveryCombo_SelectionChanged">
+                                    <ComboBoxItem Content="Public" Tag="public"/>
+                                    <ComboBoxItem Content="Whisper" Tag="whisper" IsSelected="True"/>
+                                </ComboBox>
+                            </StackPanel>
+
+                            <!-- Lines 5–6: 2nd message list + editor (shown when checked) -->
+                            <StackPanel x:Name="Welcome2Panel" Visibility="Collapsed">
+                                <ListBox x:Name="Welcome2List" Height="72" Margin="0,0,0,6"
+                                         SelectionChanged="Welcome2List_SelectionChanged"
+                                         Background="#141428" Foreground="#C0C0E0" BorderBrush="#3A3A58"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                         HorizontalContentAlignment="Stretch"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBox x:Name="Welcome2EditBox" Grid.Column="0" Height="26" Margin="0,0,6,0"
+                                             Background="#141428" Foreground="#E0E0FF" BorderBrush="#3A3A58"
+                                             ToolTip="Use {name} for joiner name."/>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                        <Button Content="Add" Click="Welcome2Add_Click" Margin="0,0,4,0"/>
+                                        <Button Content="Update" Click="Welcome2Update_Click" Margin="0,0,4,0"/>
+                                        <Button Content="Delete" Click="Welcome2Delete_Click"/>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+
+                            <TextBlock Text="Random pick per join; next pick avoids the previous message. Use {name}."
+                                       FontSize="9" Foreground="#707090" Margin="0,8,0,0" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Expander>
 

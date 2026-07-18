@@ -195,28 +195,32 @@ public partial class MainWindow : Window
         brush.Freeze();
         return brush;
     }
-    // Message templates for events like Welcoming - user editable, random pick, {name} placeholder
-    private Dictionary<string, Dictionary<string, List<string>>> _messageTemplates = new Dictionary<string, Dictionary<string, List<string>>>(StringComparer.OrdinalIgnoreCase);
-    private readonly Random _random = new Random();
-    private const string MessagesFile = "messages.json";
-    private string _currentEvent = "Welcoming";
+    // Welcome settings: two independent message sets (public/whisper each), random with no consecutive repeat
+    private readonly Random _random = new();
+    private static readonly string MessagesFile = UserDataPaths.GetConfigFile("messages.json");
     private string _currentLanguage = "en";
-    private string _joinEvent = "Welcoming";
-    private sealed class WelcomeExtraConfig
-    {
-        public bool SendExtra { get; set; }
-        public bool AsWhisper { get; set; } = true;
-        public Dictionary<string, string> Messages { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-    }
-    private WelcomeExtraConfig _welcomeExtra = new();
-    private bool _welcomeExtraUiSyncing;
+    private const string DefaultSecondMsg = "Custom 2nd message to the user - Update Me";
 
-    private ObservableCollection<string> _currentMessagesView = new ObservableCollection<string>();
+    private sealed class WelcomeMsgSet
+    {
+        public bool AsWhisper { get; set; }
+        public Dictionary<string, List<string>> Messages { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private WelcomeMsgSet _welcome1 = new() { AsWhisper = false };
+    private WelcomeMsgSet _welcome2 = new() { AsWhisper = true };
+    private bool _welcome2Enabled;
+    private bool _welcomeUiSyncing;
+    private string? _lastWelcome1Pick;
+    private string? _lastWelcome2Pick;
+
+    private ObservableCollection<string> _welcome1View = new();
+    private ObservableCollection<string> _welcome2View = new();
 
     // !Commands: category -> language -> list of command/response pairs
     private Dictionary<string, Dictionary<string, List<CommandEntry>>> _commandCategories =
         new Dictionary<string, Dictionary<string, List<CommandEntry>>>(StringComparer.OrdinalIgnoreCase);
-    private const string CommandsFile = "commands.json";
+    private static readonly string CommandsFile = UserDataPaths.GetConfigFile("commands.json");
     private string _currentCommandCategory = "General";
     private string _commandLanguage = "en";
     private string _activeCommandCategory = "General";
@@ -258,21 +262,9 @@ public partial class MainWindow : Window
             _robustHeartbeatTimer.Elapsed += (s, args) => { try { File.AppendAllText(@"C:\Users\serve\imvu_companion_crash.log", $"[{DateTime.Now:HH:mm:ss}] ROBUST: alive\n"); } catch { } };
             _robustHeartbeatTimer.Start();
 
-            // Load user editable messages for events like Welcoming
             LoadMessages();
-            PopulateEventCombo();
-            if (EventCombo.Items.Count > 0)
-            {
-                EventCombo.SelectedIndex = 0;
-            }
-            else
-            {
-                _currentEvent = "";
-            }
             SelectAppLanguageCombo(_currentLanguage);
-            RefreshWelcomeExtraUi();
-            RefreshMessagesList();  // ensure initial list (or empty if no events in .json)
-            if (EventNameEditBox != null) EventNameEditBox.Text = _currentEvent;
+            RefreshWelcomeUi();
 
             LoadCommands();
             PopulateCategoryCombo();
@@ -930,7 +922,7 @@ public partial class MainWindow : Window
             // a) Bot may only start when an active room is present
             if (!await IsActiveRoomPresentAsync())
             {
-                AppendLog("No active chat room detected. Open a room, then Start Bot.", LogCategory.Warning);
+                AppendActivityLog("[Bot] Error - No active room detected.", LogCategory.Error);
                 UpdateStatusText("No room — open a chat room first");
                 return;
             }
@@ -1053,11 +1045,12 @@ public partial class MainWindow : Window
     private bool IsBotActive =>
         _botRunning && !_botPausedNoRoom && !BotCancellationToken.IsCancellationRequested;
 
-    // ===== Message templates management (strictly from one .json, nested event->lang->list<string>) =====
+    // ===== Welcome Settings (msg1 + optional msg2) =====
     private void LoadMessages()
     {
-        _messageTemplates.Clear();
-        _joinEvent = "Welcoming";
+        _welcome1 = new WelcomeMsgSet { AsWhisper = false };
+        _welcome2 = new WelcomeMsgSet { AsWhisper = true };
+        _welcome2Enabled = false;
         bool fileExisted = File.Exists(MessagesFile);
         try
         {
@@ -1067,164 +1060,247 @@ public partial class MainWindow : Window
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
-                // Load joinEvent if present
-                if (root.TryGetProperty("joinEvent", out var je) && je.ValueKind == JsonValueKind.String)
+                // New format: msg1 / msg2
+                if (root.TryGetProperty("msg1", out var m1) && m1.ValueKind == JsonValueKind.Object)
                 {
-                    _joinEvent = je.GetString() ?? "Welcoming";
-                }
-
-                // Load events: support new { "events": {..} } or direct old flat
-                JsonElement eventsEl = default;
-                if (root.TryGetProperty("events", out eventsEl) && eventsEl.ValueKind == JsonValueKind.Object)
-                {
-                    // new structure
+                    ReadWelcomeSet(m1, _welcome1);
+                    if (root.TryGetProperty("msg2", out var m2) && m2.ValueKind == JsonValueKind.Object)
+                    {
+                        if (m2.TryGetProperty("enabled", out var en) &&
+                            (en.ValueKind == JsonValueKind.True || en.ValueKind == JsonValueKind.False))
+                            _welcome2Enabled = en.GetBoolean();
+                        ReadWelcomeSet(m2, _welcome2);
+                    }
                 }
                 else
                 {
-                    eventsEl = root;
-                }
-
-                var eventsDict = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<string>>>>(eventsEl.GetRawText());
-                if (eventsDict != null)
-                {
-                    _messageTemplates = eventsDict;
-                }
-
-                if (root.TryGetProperty("welcomeExtra", out var we) && we.ValueKind == JsonValueKind.Object)
-                {
-                    if (we.TryGetProperty("sendExtra", out var se) &&
-                        (se.ValueKind == JsonValueKind.True || se.ValueKind == JsonValueKind.False))
-                        _welcomeExtra.SendExtra = se.GetBoolean();
-                    if (we.TryGetProperty("asWhisper", out var aw) &&
-                        (aw.ValueKind == JsonValueKind.True || aw.ValueKind == JsonValueKind.False))
-                        _welcomeExtra.AsWhisper = aw.GetBoolean();
-                    if (we.TryGetProperty("messages", out var msgs) && msgs.ValueKind == JsonValueKind.Object)
+                    // Migrate old { events.Welcoming, welcomeExtra }
+                    if (root.TryGetProperty("events", out var eventsEl) && eventsEl.ValueKind == JsonValueKind.Object)
                     {
-                        var extraMsgs = JsonSerializer.Deserialize<Dictionary<string, string>>(msgs.GetRawText());
-                        if (extraMsgs != null) _welcomeExtra.Messages = extraMsgs;
+                        string joinEvent = "Welcoming";
+                        if (root.TryGetProperty("joinEvent", out var je) && je.ValueKind == JsonValueKind.String)
+                            joinEvent = je.GetString() ?? "Welcoming";
+                        JsonElement ev = default;
+                        bool hasEv = eventsEl.TryGetProperty(joinEvent, out ev);
+                        if (!hasEv)
+                        {
+                            foreach (var prop in eventsEl.EnumerateObject())
+                            {
+                                ev = prop.Value;
+                                hasEv = true;
+                                break;
+                            }
+                        }
+                        if (hasEv && ev.ValueKind == JsonValueKind.Object)
+                        {
+                            var dict = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(ev.GetRawText());
+                            if (dict != null)
+                                _welcome1.Messages = new Dictionary<string, List<string>>(dict, StringComparer.OrdinalIgnoreCase);
+                        }
+                    }
+                    if (root.TryGetProperty("welcomeExtra", out var we) && we.ValueKind == JsonValueKind.Object)
+                    {
+                        if (we.TryGetProperty("sendExtra", out var se) &&
+                            (se.ValueKind == JsonValueKind.True || se.ValueKind == JsonValueKind.False))
+                            _welcome2Enabled = se.GetBoolean();
+                        if (we.TryGetProperty("asWhisper", out var aw) &&
+                            (aw.ValueKind == JsonValueKind.True || aw.ValueKind == JsonValueKind.False))
+                            _welcome2.AsWhisper = aw.GetBoolean();
+                        if (we.TryGetProperty("messages", out var msgs) && msgs.ValueKind == JsonValueKind.Object)
+                        {
+                            foreach (var prop in msgs.EnumerateObject())
+                            {
+                                string text = prop.Value.GetString() ?? "";
+                                if (string.IsNullOrWhiteSpace(text)) continue;
+                                if (!_welcome2.Messages.ContainsKey(prop.Name))
+                                    _welcome2.Messages[prop.Name] = new List<string>();
+                                _welcome2.Messages[prop.Name].Add(text);
+                            }
+                        }
                     }
                 }
             }
         }
-        catch (Exception ex) { AppendLog("Load messages err: " + ex.Message); }
+        catch (Exception ex) { AppendLog("Load messages err: " + ex.Message, LogCategory.Error); }
 
-        // Seed defaults ONLY if file did not exist at all (first launch ever). 
-        // If file exists (even edited/empty/custom events), respect EXACTLY what's in the JSON. No hidden copies or forced "Welcoming".
+        // First install / empty data folder only — never overwrite an existing messages.json on restart or update.
         if (!fileExisted)
         {
-            _messageTemplates["Welcoming"] = new Dictionary<string, List<string>>
+            _welcome1.Messages["en"] = new List<string>
             {
-                ["en"] = new List<string> { "Welcome {name} to the room!", "Hey {name}, glad you joined!", "Hello {name}!" },
-                ["ru"] = new List<string> { "Добро пожаловать {name} в комнату!", "Привет {name}, рад тебя видеть!", "Здравствуй {name}!" }
+                "Welcome {name} to the room!",
+                "Hey {name}, glad you joined!",
+                "Hello {name}!"
             };
-            _joinEvent = "Welcoming";
-            _welcomeExtra.Messages["en"] = "Glad you're here!";
-            _welcomeExtra.Messages["ru"] = "Рад тебя видеть!";
-            SaveMessages(); // write initial
+            _welcome1.Messages["ru"] = new List<string>
+            {
+                "Добро пожаловать {name} в комнату!",
+                "Привет {name}, рад тебя видеть!",
+                "Здравствуй {name}!"
+            };
+            _welcome2.Messages["en"] = new List<string> { DefaultSecondMsg };
+            _welcome2.Messages["ru"] = new List<string> { DefaultSecondMsg };
+            SaveMessages();
         }
 
-        // Ensure joinEvent points to something valid WITHOUT forcing "Welcoming" key if user removed/renamed it.
-        if (string.IsNullOrEmpty(_joinEvent) || !_messageTemplates.ContainsKey(_joinEvent))
-        {
-            _joinEvent = _messageTemplates.Keys.FirstOrDefault() ?? "";
-        }
-
+        EnsureWelcomeDefaults();
         SetAppLanguage("en", refreshUi: false);
+    }
+
+    private static void ReadWelcomeSet(JsonElement el, WelcomeMsgSet set)
+    {
+        if (el.TryGetProperty("asWhisper", out var aw) &&
+            (aw.ValueKind == JsonValueKind.True || aw.ValueKind == JsonValueKind.False))
+            set.AsWhisper = aw.GetBoolean();
+        else if (el.TryGetProperty("delivery", out var del) && del.ValueKind == JsonValueKind.String)
+            set.AsWhisper = string.Equals(del.GetString(), "whisper", StringComparison.OrdinalIgnoreCase);
+
+        if (el.TryGetProperty("messages", out var msgs) && msgs.ValueKind == JsonValueKind.Object)
+        {
+            var dict = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(msgs.GetRawText());
+            if (dict != null)
+                set.Messages = new Dictionary<string, List<string>>(dict, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private void EnsureWelcomeDefaults()
+    {
+        if (!_welcome1.Messages.ContainsKey("en") || _welcome1.Messages["en"].Count == 0)
+        {
+            _welcome1.Messages["en"] = new List<string>
+            {
+                "Welcome {name} to the room!",
+                "Hey {name}, glad you joined!",
+                "Hello {name}!"
+            };
+        }
+        if (!_welcome2.Messages.ContainsKey("en") || _welcome2.Messages["en"].Count == 0)
+            _welcome2.Messages["en"] = new List<string> { DefaultSecondMsg };
     }
 
     private void SaveMessages()
     {
         try
         {
-            SaveWelcomeExtraMessageForCurrentLang();
+            Directory.CreateDirectory(UserDataPaths.Root);
             var toSave = new
             {
-                joinEvent = _joinEvent,
-                welcomeExtra = new
+                msg1 = new
                 {
-                    sendExtra = _welcomeExtra.SendExtra,
-                    asWhisper = _welcomeExtra.AsWhisper,
-                    messages = _welcomeExtra.Messages
+                    delivery = _welcome1.AsWhisper ? "whisper" : "public",
+                    asWhisper = _welcome1.AsWhisper,
+                    messages = _welcome1.Messages
                 },
-                events = _messageTemplates
+                msg2 = new
+                {
+                    enabled = _welcome2Enabled,
+                    delivery = _welcome2.AsWhisper ? "whisper" : "public",
+                    asWhisper = _welcome2.AsWhisper,
+                    messages = _welcome2.Messages
+                }
             };
-            string json = JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(MessagesFile, json);
-            AppendLog("Message templates saved to single .json (all events + languages).");
+            File.WriteAllText(MessagesFile, JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true }));
         }
-        catch (Exception ex) { AppendLog("Save messages err: " + ex.Message); }
+        catch (Exception ex) { AppendLog("Save messages err: " + ex.Message, LogCategory.Error); }
     }
 
-    private List<string> GetCurrentTemplates(string eventType)
+    private List<string> GetWelcomeMessages(WelcomeMsgSet set)
     {
-        if (_messageTemplates.TryGetValue(eventType, out var langDict) &&
-            langDict.TryGetValue(_currentLanguage, out var list) && list.Count > 0)
+        if (set.Messages.TryGetValue(_currentLanguage, out var list) && list.Count > 0)
             return list;
-        // fallback to en
-        if (langDict != null && langDict.TryGetValue("en", out var enList) && enList.Count > 0)
-            return enList;
+        if (set.Messages.TryGetValue("en", out var en) && en.Count > 0)
+            return en;
         return new List<string> { "Welcome {name}!" };
     }
 
-    private void PopulateEventCombo()
+    private string PickWelcomeMessage(WelcomeMsgSet set, ref string? lastPick)
     {
-        EventCombo.Items.Clear();
-        foreach (var key in _messageTemplates.Keys)
+        var list = GetWelcomeMessages(set);
+        if (list.Count == 0) return "Welcome {name}!";
+        if (list.Count == 1)
         {
-            EventCombo.Items.Add(new ComboBoxItem { Content = key });
+            lastPick = list[0];
+            return list[0];
         }
-        // Do NOT auto-add "Welcoming" or any preset here. Only what's in the JSON.
-        // User adds via "Add Event" button. This ensures dropdown exactly matches the .json on (re)load.
+        // Never send the same template twice in a row when alternatives exist
+        string pick;
+        int guard = 0;
+        do
+        {
+            pick = list[_random.Next(list.Count)];
+            guard++;
+        } while (pick == lastPick && guard < 20);
+        lastPick = pick;
+        return pick;
     }
 
-    private void RefreshMessagesList()
+    private void RefreshWelcomeUi()
     {
-        if (MessagesList == null || MessageEditBox == null || _currentMessagesView == null) return;
-
-        if (string.IsNullOrEmpty(_currentEvent))
+        if (Welcome1List == null) return;
+        _welcomeUiSyncing = true;
+        try
         {
-            _currentMessagesView.Clear();
-            MessagesList.ItemsSource = _currentMessagesView;
-            MessageEditBox.Text = "";
-            return;
+            SelectDeliveryCombo(Welcome1DeliveryCombo, _welcome1.AsWhisper);
+            SelectDeliveryCombo(Welcome2DeliveryCombo, _welcome2.AsWhisper);
+            if (Welcome2EnabledCheck != null)
+                Welcome2EnabledCheck.IsChecked = _welcome2Enabled;
+            UpdateWelcome2PanelVisibility();
+            RefreshWelcomeList(1);
+            RefreshWelcomeList(2);
         }
-
-        // Ensure structure for current event+lang (only for valid event name)
-        if (!_messageTemplates.ContainsKey(_currentEvent))
-            _messageTemplates[_currentEvent] = new Dictionary<string, List<string>>();
-        if (!_messageTemplates[_currentEvent].ContainsKey(_currentLanguage))
-            _messageTemplates[_currentEvent][_currentLanguage] = new List<string>();
-
-        var list = _messageTemplates[_currentEvent][_currentLanguage];
-        _currentMessagesView.Clear();
-        foreach (var m in list) _currentMessagesView.Add(m);
-        MessagesList.ItemsSource = _currentMessagesView;
-        MessageEditBox.Text = "";
+        finally { _welcomeUiSyncing = false; }
     }
 
-    private void EventCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private static void SelectDeliveryCombo(ComboBox? combo, bool asWhisper)
     {
-        if (EventCombo == null || EventCombo.SelectedItem == null) return;
-        if (EventCombo.SelectedItem is ComboBoxItem item)
+        if (combo == null) return;
+        string tag = asWhisper ? "whisper" : "public";
+        foreach (ComboBoxItem item in combo.Items)
         {
-            _currentEvent = item.Content?.ToString() ?? "";
-            if (EventNameEditBox != null) EventNameEditBox.Text = _currentEvent;
-            RefreshMessagesList();
+            if (item.Tag is string t && t == tag)
+            {
+                combo.SelectedItem = item;
+                return;
+            }
         }
+    }
+
+    private void UpdateWelcome2PanelVisibility()
+    {
+        bool on = _welcome2Enabled;
+        if (Welcome2DeliveryCombo != null)
+            Welcome2DeliveryCombo.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+        if (Welcome2Panel != null)
+            Welcome2Panel.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void RefreshWelcomeList(int which)
+    {
+        var set = which == 1 ? _welcome1 : _welcome2;
+        var view = which == 1 ? _welcome1View : _welcome2View;
+        var listBox = which == 1 ? Welcome1List : Welcome2List;
+        var edit = which == 1 ? Welcome1EditBox : Welcome2EditBox;
+        if (listBox == null || edit == null) return;
+
+        if (!set.Messages.ContainsKey(_currentLanguage))
+            set.Messages[_currentLanguage] = new List<string>();
+        var list = set.Messages[_currentLanguage];
+        view.Clear();
+        foreach (var m in list) view.Add(m);
+        listBox.ItemsSource = view;
+        edit.Text = "";
     }
 
     private void SetAppLanguage(string lang, bool refreshUi = true)
     {
         if (string.IsNullOrEmpty(lang)) return;
-        if (refreshUi && !_welcomeExtraUiSyncing)
-            SaveWelcomeExtraMessageForCurrentLang();
         _currentLanguage = lang;
         _commandLanguage = lang;
         if (refreshUi)
         {
-            RefreshMessagesList();
+            RefreshWelcomeList(1);
+            RefreshWelcomeList(2);
             RefreshCommandsList();
-            RefreshWelcomeExtraMessageBox();
         }
     }
 
@@ -1234,108 +1310,6 @@ public partial class MainWindow : Window
     {
         if (BotToggleBtn == null) return;
         (_botGlowAnimator ??= new ButtonGlowAnimator(BotToggleBtn)).SetActive(running);
-    }
-
-    private void SaveWelcomeExtraMessageForCurrentLang()
-    {
-        if (WelcomeExtraMessageBox == null || string.IsNullOrEmpty(_currentLanguage)) return;
-        _welcomeExtra.Messages[_currentLanguage] = WelcomeExtraMessageBox.Text ?? "";
-    }
-
-    private void RefreshWelcomeExtraMessageBox()
-    {
-        if (WelcomeExtraMessageBox == null) return;
-        _welcomeExtraUiSyncing = true;
-        try
-        {
-            if (_welcomeExtra.Messages.TryGetValue(_currentLanguage, out var msg))
-                WelcomeExtraMessageBox.Text = msg;
-            else
-                WelcomeExtraMessageBox.Text = "";
-        }
-        finally { _welcomeExtraUiSyncing = false; }
-    }
-
-    private void RefreshWelcomeExtraUi()
-    {
-        if (WelcomeExtraModeCombo == null) return;
-        _welcomeExtraUiSyncing = true;
-        try
-        {
-            string modeTag = _welcomeExtra.SendExtra ? "send" : "none";
-            foreach (ComboBoxItem item in WelcomeExtraModeCombo.Items)
-            {
-                if (item.Tag is string t && t == modeTag)
-                {
-                    WelcomeExtraModeCombo.SelectedItem = item;
-                    break;
-                }
-            }
-
-            if (WelcomeExtraDeliveryCombo != null)
-            {
-                string deliveryTag = _welcomeExtra.AsWhisper ? "whisper" : "public";
-                foreach (ComboBoxItem item in WelcomeExtraDeliveryCombo.Items)
-                {
-                    if (item.Tag is string t && t == deliveryTag)
-                    {
-                        WelcomeExtraDeliveryCombo.SelectedItem = item;
-                        break;
-                    }
-                }
-            }
-
-            UpdateWelcomeExtraPanelsVisibility();
-            RefreshWelcomeExtraMessageBox();
-        }
-        finally { _welcomeExtraUiSyncing = false; }
-    }
-
-    private void UpdateWelcomeExtraPanelsVisibility()
-    {
-        bool show = _welcomeExtra.SendExtra;
-        if (WelcomeExtraDeliveryCombo != null)
-            WelcomeExtraDeliveryCombo.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        if (WelcomeExtraMessageBox != null)
-            WelcomeExtraMessageBox.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void SyncWelcomeExtraFromUi()
-    {
-        if (_welcomeExtraUiSyncing) return;
-        if (WelcomeExtraModeCombo?.SelectedItem is ComboBoxItem modeItem && modeItem.Tag is string modeTag)
-            _welcomeExtra.SendExtra = modeTag == "send";
-        if (WelcomeExtraDeliveryCombo?.SelectedItem is ComboBoxItem delItem && delItem.Tag is string delTag)
-            _welcomeExtra.AsWhisper = delTag == "whisper";
-        SaveWelcomeExtraMessageForCurrentLang();
-        UpdateWelcomeExtraPanelsVisibility();
-    }
-
-    private string GetWelcomeExtraMessage()
-    {
-        if (_welcomeExtra.Messages.TryGetValue(_currentLanguage, out var msg) && !string.IsNullOrWhiteSpace(msg))
-            return msg.Trim();
-        if (_welcomeExtra.Messages.TryGetValue("en", out var en) && !string.IsNullOrWhiteSpace(en))
-            return en.Trim();
-        return "";
-    }
-
-    private void WelcomeExtraModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_welcomeExtraUiSyncing || WelcomeExtraModeCombo?.SelectedItem == null) return;
-        SyncWelcomeExtraFromUi();
-    }
-
-    private void WelcomeExtraDeliveryCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_welcomeExtraUiSyncing || WelcomeExtraDeliveryCombo?.SelectedItem == null) return;
-        SyncWelcomeExtraFromUi();
-    }
-
-    private void WelcomeExtraMessageBox_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (_welcomeExtraUiSyncing) return;
-        SaveWelcomeExtraMessageForCurrentLang();
     }
 
     private void SelectAppLanguageCombo(string lang)
@@ -1365,128 +1339,128 @@ public partial class MainWindow : Window
             SetAppLanguage(lang);
     }
 
-    private void MessagesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void Welcome1DeliveryCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (MessagesList == null || MessageEditBox == null) return;
-        if (MessagesList.SelectedItem is string sel)
-        {
-            MessageEditBox.Text = sel;
-        }
-    }
-
-    private void AddMessage_Click(object sender, RoutedEventArgs e)
-    {
-        if (!_messageTemplates.ContainsKey(_currentEvent))
-            _messageTemplates[_currentEvent] = new Dictionary<string, List<string>>();
-        if (!_messageTemplates[_currentEvent].ContainsKey(_currentLanguage))
-            _messageTemplates[_currentEvent][_currentLanguage] = new List<string>();
-
-        var underlying = _messageTemplates[_currentEvent][_currentLanguage];
-        string text = MessageEditBox.Text.Trim();
-        if (string.IsNullOrEmpty(text)) text = "New message for {name}";
-        if (!underlying.Contains(text))
-        {
-            underlying.Add(text);
-            _currentMessagesView.Add(text);
-        }
-    }
-
-    private void RemoveMessage_Click(object sender, RoutedEventArgs e)
-    {
-        if (MessagesList.SelectedItem is string sel)
-        {
-            if (_messageTemplates.TryGetValue(_currentEvent, out var langDict) &&
-                langDict.TryGetValue(_currentLanguage, out var underlying))
-            {
-                underlying.Remove(sel);
-                _currentMessagesView.Remove(sel);
-            }
-        }
-    }
-
-    private void UpdateMessage_Click(object sender, RoutedEventArgs e)
-    {
-        if (MessagesList.SelectedItem is string oldSel)
-        {
-            if (_messageTemplates.TryGetValue(_currentEvent, out var langDict) &&
-                langDict.TryGetValue(_currentLanguage, out var underlying))
-            {
-                string newText = MessageEditBox.Text.Trim();
-                if (!string.IsNullOrEmpty(newText))
-                {
-                    int idx = underlying.IndexOf(oldSel);
-                    if (idx >= 0)
-                    {
-                        underlying[idx] = newText;
-                        _currentMessagesView[idx] = newText;
-                    }
-                }
-            }
-        }
-    }
-
-    private void SaveMessages_Click(object sender, RoutedEventArgs e)
-    {
+        if (_welcomeUiSyncing || Welcome1DeliveryCombo?.SelectedItem is not ComboBoxItem item || item.Tag is not string tag)
+            return;
+        _welcome1.AsWhisper = tag == "whisper";
         SaveMessages();
     }
 
-    private void AddEvent_Click(object sender, RoutedEventArgs e)
+    private void Welcome2DeliveryCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        string newEvt = NewEventTextBox.Text.Trim();
-        if (string.IsNullOrEmpty(newEvt)) return;
-        if (!_messageTemplates.ContainsKey(newEvt))
+        if (_welcomeUiSyncing || Welcome2DeliveryCombo?.SelectedItem is not ComboBoxItem item || item.Tag is not string tag)
+            return;
+        _welcome2.AsWhisper = tag == "whisper";
+        SaveMessages();
+    }
+
+    private void Welcome2EnabledCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_welcomeUiSyncing) return;
+        _welcome2Enabled = Welcome2EnabledCheck?.IsChecked == true;
+        // One-time automation when enabling 2nd msg: if 1st is Whisper, set 2nd to Whisper too.
+        // Does not keep them linked afterward.
+        if (_welcome2Enabled && _welcome1.AsWhisper)
         {
-            _messageTemplates[newEvt] = new Dictionary<string, List<string>>
-            {
-                { _currentLanguage, new List<string> { "New template for {name}" } }
-            };
-            PopulateEventCombo();
-            // select the new event
-            foreach (ComboBoxItem cbi in EventCombo.Items)
-            {
-                if (cbi.Content?.ToString() == newEvt)
-                {
-                    EventCombo.SelectedItem = cbi;
-                    break;
-                }
-            }
-            if (EventNameEditBox != null) EventNameEditBox.Text = newEvt;
-            NewEventTextBox.Text = "";
+            _welcome2.AsWhisper = true;
+            _welcomeUiSyncing = true;
+            try { SelectDeliveryCombo(Welcome2DeliveryCombo, true); }
+            finally { _welcomeUiSyncing = false; }
+        }
+        UpdateWelcome2PanelVisibility();
+        SaveMessages();
+    }
+
+    private void Welcome1List_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (Welcome1List?.SelectedItem is string sel && Welcome1EditBox != null)
+            Welcome1EditBox.Text = sel;
+    }
+
+    private void Welcome2List_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (Welcome2List?.SelectedItem is string sel && Welcome2EditBox != null)
+            Welcome2EditBox.Text = sel;
+    }
+
+    private List<string> EnsureLangList(WelcomeMsgSet set)
+    {
+        if (!set.Messages.ContainsKey(_currentLanguage))
+            set.Messages[_currentLanguage] = new List<string>();
+        return set.Messages[_currentLanguage];
+    }
+
+    private void Welcome1Add_Click(object sender, RoutedEventArgs e)
+    {
+        var list = EnsureLangList(_welcome1);
+        string text = Welcome1EditBox?.Text?.Trim() ?? "";
+        if (string.IsNullOrEmpty(text)) text = "New message for {name}";
+        if (!list.Contains(text))
+        {
+            list.Add(text);
+            _welcome1View.Add(text);
+            SaveMessages();
         }
     }
 
-    private void RenameEvent_Click(object sender, RoutedEventArgs e)
+    private void Welcome1Update_Click(object sender, RoutedEventArgs e)
     {
-        if (EventNameEditBox == null) return;
-        string newName = EventNameEditBox.Text.Trim();
-        if (string.IsNullOrEmpty(newName) || newName == _currentEvent) return;
-        if (_messageTemplates.ContainsKey(newName)) 
+        if (Welcome1List?.SelectedItem is not string oldSel) return;
+        string newText = Welcome1EditBox?.Text?.Trim() ?? "";
+        if (string.IsNullOrEmpty(newText)) return;
+        var list = EnsureLangList(_welcome1);
+        int idx = list.IndexOf(oldSel);
+        if (idx < 0) return;
+        list[idx] = newText;
+        _welcome1View[idx] = newText;
+        SaveMessages();
+    }
+
+    private void Welcome1Delete_Click(object sender, RoutedEventArgs e)
+    {
+        if (Welcome1List?.SelectedItem is not string sel) return;
+        var list = EnsureLangList(_welcome1);
+        list.Remove(sel);
+        _welcome1View.Remove(sel);
+        if (Welcome1EditBox != null) Welcome1EditBox.Text = "";
+        SaveMessages();
+    }
+
+    private void Welcome2Add_Click(object sender, RoutedEventArgs e)
+    {
+        var list = EnsureLangList(_welcome2);
+        string text = Welcome2EditBox?.Text?.Trim() ?? "";
+        if (string.IsNullOrEmpty(text)) text = DefaultSecondMsg;
+        if (!list.Contains(text))
         {
-            AppendLog("Event name already exists: " + newName);
-            return;
-        }
-        if (_messageTemplates.ContainsKey(_currentEvent))
-        {
-            var data = _messageTemplates[_currentEvent];
-            _messageTemplates.Remove(_currentEvent);
-            _messageTemplates[newName] = data;
-            if (_joinEvent == _currentEvent) _joinEvent = newName;
-            _currentEvent = newName;
-            PopulateEventCombo();
-            // re-select
-            foreach (ComboBoxItem cbi in EventCombo.Items)
-            {
-                if (cbi.Content?.ToString() == newName)
-                {
-                    EventCombo.SelectedItem = cbi;
-                    break;
-                }
-            }
-            EventNameEditBox.Text = newName;
-            RefreshMessagesList();
+            list.Add(text);
+            _welcome2View.Add(text);
             SaveMessages();
-            AppendLog("Event renamed to " + newName);
         }
+    }
+
+    private void Welcome2Update_Click(object sender, RoutedEventArgs e)
+    {
+        if (Welcome2List?.SelectedItem is not string oldSel) return;
+        string newText = Welcome2EditBox?.Text?.Trim() ?? "";
+        if (string.IsNullOrEmpty(newText)) return;
+        var list = EnsureLangList(_welcome2);
+        int idx = list.IndexOf(oldSel);
+        if (idx < 0) return;
+        list[idx] = newText;
+        _welcome2View[idx] = newText;
+        SaveMessages();
+    }
+
+    private void Welcome2Delete_Click(object sender, RoutedEventArgs e)
+    {
+        if (Welcome2List?.SelectedItem is not string sel) return;
+        var list = EnsureLangList(_welcome2);
+        list.Remove(sel);
+        _welcome2View.Remove(sel);
+        if (Welcome2EditBox != null) Welcome2EditBox.Text = "";
+        SaveMessages();
     }
 
     // ===== !Commands management (category -> lang -> list<CommandEntry>) =====
@@ -1555,13 +1529,14 @@ public partial class MainWindow : Window
     {
         try
         {
+            Directory.CreateDirectory(UserDataPaths.Root);
             _activeCommandCategory = _currentCommandCategory;
             var toSave = new { activeCategory = _activeCommandCategory, categories = _commandCategories };
             string json = JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(CommandsFile, json);
             AppendLog("!Commands saved to commands.json.");
         }
-        catch (Exception ex) { AppendLog("Save commands err: " + ex.Message); }
+        catch (Exception ex) { AppendLog("Save commands err: " + ex.Message, LogCategory.Error); }
     }
 
     private Dictionary<string, string> GetActiveCommandReplies()
@@ -2236,38 +2211,44 @@ public partial class MainWindow : Window
             return;
         }
 
-        var templates = GetCurrentTemplates(_joinEvent);
-        string template = templates.Count > 0 ? templates[_random.Next(templates.Count)] : "Welcome {name}!";
-        string greet = template.Replace("{name}", joiner);
+        // Message 1
+        string template1 = PickWelcomeMessage(_welcome1, ref _lastWelcome1Pick);
+        string greet = template1.Replace("{name}", joiner);
         await Task.Delay(JoinGreetDelayMs, ct);
         if (!IsBotActive) return;
-        await SendToImvuChat(greet, ct: ct);
+        await SendWelcomeDeliveryAsync(greet, _welcome1.AsWhisper, joiner, whisperRowRef, joinUserId, ct);
         _sessionGreetedCount++;
         UpdateStatusBar();
 
-        if (!_welcomeExtra.SendExtra || !IsBotActive) return;
-        string extraTemplate = GetWelcomeExtraMessage();
-        if (string.IsNullOrWhiteSpace(extraTemplate)) return;
-
-        string extra = extraTemplate.Replace("{name}", joiner);
+        // Optional message 2 (independent delivery)
+        if (!_welcome2Enabled || !IsBotActive) return;
+        string template2 = PickWelcomeMessage(_welcome2, ref _lastWelcome2Pick);
+        if (string.IsNullOrWhiteSpace(template2)) return;
+        string extra = template2.Replace("{name}", joiner);
         await Task.Delay(JoinGreetDelayMs, ct);
         if (!IsBotActive) return;
-        if (_welcomeExtra.AsWhisper)
-        {
-            // Never fall back to public — welcome whisper stays private or is skipped.
-            if (string.IsNullOrWhiteSpace(whisperRowRef) && string.IsNullOrWhiteSpace(joinUserId))
-            {
-                AppendActivityLog($"[Whisper] skipped {joiner} - no join row/uid", LogCategory.Warning);
-                return;
-            }
+        await SendWelcomeDeliveryAsync(extra, _welcome2.AsWhisper, joiner, whisperRowRef, joinUserId, ct);
+    }
 
-            string? whisperResult = await SendToImvuChat(extra, whisperReply: true, whisperRowRef: whisperRowRef,
-                whisperSpeaker: joiner, proactiveWhisperToUser: true, joinUserId: joinUserId, ct: ct);
-            if (whisperResult != "ok")
-                AppendActivityLog($"[Whisper] skipped (private only): {whisperResult ?? "?"}", LogCategory.Warning);
+    private async Task SendWelcomeDeliveryAsync(
+        string text, bool asWhisper, string joiner, string whisperRowRef, string joinUserId, CancellationToken ct)
+    {
+        if (!asWhisper)
+        {
+            await SendToImvuChat(text, ct: ct);
+            return;
         }
-        else
-            await SendToImvuChat(extra, ct: ct);
+
+        if (string.IsNullOrWhiteSpace(whisperRowRef) && string.IsNullOrWhiteSpace(joinUserId))
+        {
+            AppendActivityLog($"[Whisper] skipped {joiner} - no join row/uid", LogCategory.Warning);
+            return;
+        }
+
+        string? whisperResult = await SendToImvuChat(text, whisperReply: true, whisperRowRef: whisperRowRef,
+            whisperSpeaker: joiner, proactiveWhisperToUser: true, joinUserId: joinUserId, ct: ct);
+        if (whisperResult != "ok" && whisperResult != null && !whisperResult.StartsWith("ok", StringComparison.Ordinal))
+            AppendActivityLog($"[Whisper] skipped (private only): {whisperResult}", LogCategory.Warning);
     }
 
     private async Task<string?> SendToImvuChat(string t, bool whisperReply = false, string whisperRowRef = "",
@@ -2837,7 +2818,7 @@ return results.slice(-maxLines);
         }
     }
 
-    private const string UiLayoutFile = "ui_layout.json";
+    private static readonly string UiLayoutFile = UserDataPaths.GetConfigFile("ui_layout.json");
 
     private sealed class UiLayoutState
     {
@@ -2846,6 +2827,8 @@ return results.slice(-maxLines);
         public double CenterX { get; set; }
         public double CenterY { get; set; }
         public string WindowState { get; set; } = "Normal";
+        /// <summary>0..1 share of left (chat) column; columns stay star-sized so the window resizes smoothly.</summary>
+        public double LeftColRatio { get; set; }
         public double LeftColWidth { get; set; }
         public double RightColWidth { get; set; }
         public double ActivityLogHeight { get; set; }
@@ -2867,6 +2850,11 @@ return results.slice(-maxLines);
                 top = RestoreBounds.Top;
             }
 
+            double leftW = MainLeftCol?.ActualWidth ?? 0;
+            double rightW = MainRightCol?.ActualWidth ?? 0;
+            double sum = leftW + rightW;
+            double ratio = sum > 1 ? leftW / sum : 0.69; // default ~2.2* vs 1*
+
             var state = new UiLayoutState
             {
                 Width = w,
@@ -2874,13 +2862,13 @@ return results.slice(-maxLines);
                 CenterX = left + w / 2,
                 CenterY = top + h / 2,
                 WindowState = WindowState.ToString(),
-                LeftColWidth = MainLeftCol?.ActualWidth ?? 0,
-                RightColWidth = MainRightCol?.ActualWidth ?? 0,
+                LeftColRatio = Math.Clamp(ratio, 0.25, 0.85),
+                LeftColWidth = leftW,
+                RightColWidth = rightW,
                 ActivityLogHeight = ActivityLogRow?.ActualHeight ?? 0,
             };
 
-            string path = Path.Combine(AppContext.BaseDirectory, UiLayoutFile);
-            File.WriteAllText(path, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(UiLayoutFile, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { }
     }
@@ -2889,10 +2877,9 @@ return results.slice(-maxLines);
     {
         try
         {
-            string path = Path.Combine(AppContext.BaseDirectory, UiLayoutFile);
             UiLayoutState? state = null;
-            if (File.Exists(path))
-                state = JsonSerializer.Deserialize<UiLayoutState>(File.ReadAllText(path));
+            if (File.Exists(UiLayoutFile))
+                state = JsonSerializer.Deserialize<UiLayoutState>(File.ReadAllText(UiLayoutFile));
 
             double w = state is { Width: > 200 } ? state.Width : Width;
             double h = state is { Height: > 200 } ? state.Height : Height;
@@ -2914,11 +2901,19 @@ return results.slice(-maxLines);
                 string.Equals(state.WindowState, "Maximized", StringComparison.OrdinalIgnoreCase))
                 WindowState = WindowState.Maximized;
 
-            if (state != null && MainLeftCol != null && MainRightCol != null &&
-                state.LeftColWidth > 100 && state.RightColWidth > 100)
+            // Star ratios keep both panels flexible when the window is resized
+            if (state != null && MainLeftCol != null && MainRightCol != null)
             {
-                MainLeftCol.Width = new GridLength(state.LeftColWidth, GridUnitType.Pixel);
-                MainRightCol.Width = new GridLength(state.RightColWidth, GridUnitType.Pixel);
+                double ratio = state.LeftColRatio;
+                if (ratio < 0.25 || ratio > 0.85)
+                {
+                    // Migrate old pixel-only layouts
+                    double sum = state.LeftColWidth + state.RightColWidth;
+                    ratio = sum > 1 ? state.LeftColWidth / sum : 0.69;
+                    ratio = Math.Clamp(ratio, 0.25, 0.85);
+                }
+                MainLeftCol.Width = new GridLength(ratio, GridUnitType.Star);
+                MainRightCol.Width = new GridLength(1.0 - ratio, GridUnitType.Star);
             }
 
             if (state != null && ActivityLogRow != null && state.ActivityLogHeight >= 72)
