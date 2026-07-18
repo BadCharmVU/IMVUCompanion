@@ -1,5 +1,5 @@
 {
-  "version": "0.9.2",
-  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.2/IMVUCompanion-Setup-v0.9.2.exe",
-  "releaseNotes": "v0.9.2 — Welcome/commands/AI settings stored in %LOCALAPPDATA%\\IMVUCompanion so edits survive restarts, rebuilds, and app updates (installer never overwrites them). First run still seeds default welcome messages. Update button shows full version (v0.9 or v0.9.2) and picks the newest of gist + GitHub release."
+  "version": "0.9.3",
+  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.3/IMVUCompanion-Setup-v0.9.3.exe",
+  "releaseNotes": "v0.9.3 — Fix welcome messages resetting to defaults on every restart. ComboBox IsSelected was saving empty messages.json before load (commands never did that). Welcome edits now persist like !commands under %LOCALAPPDATA%\\IMVUCompanion\\."
 }

@@ -211,6 +211,13 @@ public partial class MainWindow : Window
     private WelcomeMsgSet _welcome2 = new() { AsWhisper = true };
     private bool _welcome2Enabled;
     private bool _welcomeUiSyncing;
+    /// <summary>
+    /// False until LoadMessages finishes. Welcome ComboBox/CheckBox fire SelectionChanged/Checked
+    /// during InitializeComponent (IsSelected="True") and would otherwise SaveMessages() with
+    /// empty lists — wiping the user's messages.json every startup. Commands never had this
+    /// auto-save-on-UI-init path, which is why they appeared to "keep" while welcomes reset.
+    /// </summary>
+    private bool _messagesReady;
     private string? _lastWelcome1Pick;
     private string? _lastWelcome2Pick;
 
@@ -1048,6 +1055,7 @@ public partial class MainWindow : Window
     // ===== Welcome Settings (msg1 + optional msg2) =====
     private void LoadMessages()
     {
+        _messagesReady = false;
         _welcome1 = new WelcomeMsgSet { AsWhisper = false };
         _welcome2 = new WelcomeMsgSet { AsWhisper = true };
         _welcome2Enabled = false;
@@ -1123,7 +1131,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) { AppendLog("Load messages err: " + ex.Message, LogCategory.Error); }
 
-        // First install / empty data folder only — never overwrite an existing messages.json on restart or update.
+        // First install only — never wipe an existing file on restart/update.
         if (!fileExisted)
         {
             _welcome1.Messages["en"] = new List<string>
@@ -1140,11 +1148,20 @@ public partial class MainWindow : Window
             };
             _welcome2.Messages["en"] = new List<string> { DefaultSecondMsg };
             _welcome2.Messages["ru"] = new List<string> { DefaultSecondMsg };
+            _messagesReady = true; // allow first-time seed write
             SaveMessages();
         }
+        else
+        {
+            EnsureWelcomeDefaults();
+        }
 
-        EnsureWelcomeDefaults();
         SetAppLanguage("en", refreshUi: false);
+        _messagesReady = true;
+
+        int n1 = GetWelcomeMessages(_welcome1).Count;
+        int n2 = _welcome2Enabled ? GetWelcomeMessages(_welcome2).Count : 0;
+        AppendLog($"Welcome messages loaded ({n1} + {( _welcome2Enabled ? n2.ToString() : "off")}) from %LOCALAPPDATA%\\IMVUCompanion\\messages.json", LogCategory.Info);
     }
 
     private static void ReadWelcomeSet(JsonElement el, WelcomeMsgSet set)
@@ -1180,6 +1197,10 @@ public partial class MainWindow : Window
 
     private void SaveMessages()
     {
+        // Block premature saves from XAML init (delivery combo IsSelected) before LoadMessages.
+        if (!_messagesReady)
+            return;
+
         try
         {
             Directory.CreateDirectory(UserDataPaths.Root);
@@ -1199,7 +1220,12 @@ public partial class MainWindow : Window
                     messages = _welcome2.Messages
                 }
             };
-            File.WriteAllText(MessagesFile, JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true }));
+            string json = JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true });
+            // Atomic write so a crash mid-save cannot leave an empty messages.json
+            string tmp = MessagesFile + ".tmp";
+            File.WriteAllText(tmp, json);
+            File.Copy(tmp, MessagesFile, overwrite: true);
+            try { File.Delete(tmp); } catch { }
         }
         catch (Exception ex) { AppendLog("Save messages err: " + ex.Message, LogCategory.Error); }
     }
@@ -1341,7 +1367,7 @@ public partial class MainWindow : Window
 
     private void Welcome1DeliveryCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_welcomeUiSyncing || Welcome1DeliveryCombo?.SelectedItem is not ComboBoxItem item || item.Tag is not string tag)
+        if (!_messagesReady || _welcomeUiSyncing || Welcome1DeliveryCombo?.SelectedItem is not ComboBoxItem item || item.Tag is not string tag)
             return;
         _welcome1.AsWhisper = tag == "whisper";
         SaveMessages();
@@ -1349,7 +1375,7 @@ public partial class MainWindow : Window
 
     private void Welcome2DeliveryCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_welcomeUiSyncing || Welcome2DeliveryCombo?.SelectedItem is not ComboBoxItem item || item.Tag is not string tag)
+        if (!_messagesReady || _welcomeUiSyncing || Welcome2DeliveryCombo?.SelectedItem is not ComboBoxItem item || item.Tag is not string tag)
             return;
         _welcome2.AsWhisper = tag == "whisper";
         SaveMessages();
@@ -1357,7 +1383,7 @@ public partial class MainWindow : Window
 
     private void Welcome2EnabledCheck_Changed(object sender, RoutedEventArgs e)
     {
-        if (_welcomeUiSyncing) return;
+        if (!_messagesReady || _welcomeUiSyncing) return;
         _welcome2Enabled = Welcome2EnabledCheck?.IsChecked == true;
         // One-time automation when enabling 2nd msg: if 1st is Whisper, set 2nd to Whisper too.
         // Does not keep them linked afterward.
@@ -2987,7 +3013,9 @@ return results.slice(-maxLines);
     protected override void OnClosed(EventArgs e)
     {
         try { SaveUiLayout(); } catch { }
-        SaveMessages(); // persist any unsaved template changes
+        // Only after a successful LoadMessages — never flush empty defaults over user data
+        if (_messagesReady)
+            SaveMessages();
         SaveCommands();
         StopChatQueue();
         _botGlowAnimator?.Stop();
