@@ -1,22 +1,33 @@
-# Build output (local dev exe: bin/Release/net8.0-windows10.0.19041.0/ only)
+# Build output — only bin\Release\net8.0-windows10.0.19041.0 is for local daily testing
 bin/
 obj/
-bin/Debug/
 out/
-publish/
-publish.*/
-release/
-release-build/
-release2/
-release-v071/
-publish-log.txt
-installer/Output/
 tools/**/bin/
 tools/**/obj/
 
-# Local build logs
+# Publish / installer scratch (never commit; never use for daily testing)
+publish/
+publish.*/
+release/
+release-*/
+rfresh/
+release-ok/
+release-fresh/
+release-build/
+release2/
+release-v071/
+release-v092/
+installer/Output/
+
+# Local build / ship logs
+publish-log.txt
 build-log.txt
 iscc-log.txt
+build-out.txt
+build-err.txt
+ship-log.txt
+*.log
+crash_*.txt
 
 # Visual Studio / Rider
 .vs/
@@ -26,50 +37,28 @@ iscc-log.txt
 *.userosscache
 *.sln.docstates
 
-# Secrets & local runtime config (created next to exe when you run the app)
+# Secrets & local runtime (real config is %LOCALAPPDATA%\IMVUCompanion\)
 ai_settings.json
 **/ai_settings.json
-
-# User-edited bot data (optional: remove these lines if you WANT to sync configs via Git)
 messages.json
 commands.json
 **/messages.json
 **/commands.json
-
-# Logs & crashes
-*.log
-crash_*.txt
+ui_layout.json
+**/ui_layout.json
 
 # OS
 Thumbs.db
 Desktop.ini
 .DS_Store
 
-# Playwright / tooling caches under output
+# Playwright / tooling
 **/.playwright/
 
 # NuGet
 *.nupkg
 project.lock.json
 
-# WebView2 profile lives outside project (%LocalAppData%\IMVUCompanion\WebView2) — not in repo
-# Release / publish artifacts (never commit)
-release/
-release-*/
-publish/
-publish.*/
-rfresh/
+# Never commit installers
 *.exe
 !tools/**/*.exe
-ship-log.txt
-iscc-log.txt
-
-# Extra release/publish scratch dirs
-release-*/
-rfresh/
-release-ok/
-release-fresh/
-release-v092/
-ship-log.txt
-build-out.txt
-build-err.txt

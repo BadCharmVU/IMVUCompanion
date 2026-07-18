@@ -1,33 +1,28 @@
-LOCAL DEVELOPMENT — run after every code change:
+LOCAL DEVELOPMENT — only path that matters:
+
+  C:\Users\serve\ansel\IMVUCompanion\bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe
+
+After every code change:
 
   cd C:\Users\serve\ansel\IMVUCompanion
   .\scripts\Run-Dev.ps1
 
-Your test exe (only this one):
+That script:
+  - cleans publish/release-* junk
+  - rebuilds into bin\Release\net8.0-windows10.0.19041.0 only
+  - starts that exe
 
-  bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe
+Do NOT run or test from:
+  publish\  publish.*\  release*\  bin\Debug\  bin\...\win-x64\
 
-Do NOT test from:
-  bin\Debug\...
-  publish\...
-  publish.*\...
-  release\...  (installers only)
+User config (welcome messages, commands) is NOT next to the exe.
+It is always:
+  %LOCALAPPDATA%\IMVUCompanion\messages.json
+  %LOCALAPPDATA%\IMVUCompanion\commands.json
 
-When ready to ship a new version to testers:
+Dev builds show "Dev build" on the update button (no false "update available").
+Installer updates are only for the INSTALLED app on other PCs.
 
-  1) CONNECT GITHUB FIRST (one uninterrupted run):
-       gh auth login
-       gh auth setup-git
-     Or run preflight only:
-       .\scripts\Preflight-GitHub.ps1
+When ready to ship:
 
-  2) One-shot (recommended — preflight + build + push + release + gist):
-       .\scripts\Ship-Release.ps1
-
-  Manual steps instead:
-       .\scripts\Publish-Release.ps1
-       git add -A && git commit -m "Release vX.Y.Z" && git push
-       git tag vX.Y.Z && git push origin vX.Y.Z
-       .\scripts\Finish-Release.ps1
-
-  Scopes needed: repo, gist
+  .\scripts\Ship-Release.ps1

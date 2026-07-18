@@ -79,3 +79,27 @@ if (Test-Path $setup) {
 } else {
     throw "Installer build failed - missing $setup"
 }
+
+# Always refresh THE daily test exe after shipping artifacts, then wipe publish clutter.
+Write-Host "==> Refreshing local dev build (bin\Release\...)"
+Stop-Process -Name IMVUCompanion -Force -ErrorAction SilentlyContinue
+dotnet build "$ProjectRoot\IMVUCompanion.csproj" -c Release --no-incremental
+if ($LASTEXITCODE -ne 0) { throw "Dev rebuild after publish failed." }
+$devExe = Join-Path $ProjectRoot "bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe"
+if (Test-Path $devExe) {
+    Write-Host "==> Dev exe ready: $devExe"
+} else {
+    Write-Warning "Dev exe missing after rebuild: $devExe"
+}
+
+Write-Host "==> Removing publish clutter (keep bin\Release + release\ installer only)"
+Get-ChildItem $ProjectRoot -Directory -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -eq "publish" -or $_.Name -match '^publish\.' -or $_.Name -match '^release-' -or $_.Name -eq "rfresh" } |
+    ForEach-Object {
+        try {
+            Remove-Item $_.FullName -Recurse -Force
+            Write-Host "  removed $($_.FullName)"
+        } catch {
+            Write-Warning "Could not remove $($_.FullName): $_"
+        }
+    }

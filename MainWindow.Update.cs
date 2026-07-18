@@ -21,6 +21,15 @@ public partial class MainWindow
     private void InitAutoUpdateUi()
     {
         Title = AppVersion.WindowTitle;
+
+        // Dev build (bin\Release\... under the repo): never offer installer updates.
+        // You test the code you just compiled; installed copies on other PCs use the update button.
+        if (AppVersion.IsDevBuild)
+        {
+            SetUpdateButtonState(UpdateUiState.Dev);
+            return;
+        }
+
         SetUpdateButtonState(UpdateUiState.UpToDate);
         _ = CheckForUpdatesAsync(manual: false);
         StartUpdatePollTimer();
@@ -40,7 +49,8 @@ public partial class MainWindow
         UpToDate,
         Available,
         Updating,
-        Error
+        Error,
+        Dev
     }
 
     private void SetUpdateButtonState(UpdateUiState state, string? detail = null)
@@ -49,7 +59,10 @@ public partial class MainWindow
 
         void apply()
         {
-            bool show = ShowUpdateButtonWhenUpToDate || state == UpdateUiState.Available || state == UpdateUiState.Updating;
+            bool show = ShowUpdateButtonWhenUpToDate
+                || state == UpdateUiState.Available
+                || state == UpdateUiState.Updating
+                || state == UpdateUiState.Dev;
             UpdateBtn.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
 
             switch (state)
@@ -63,6 +76,15 @@ public partial class MainWindow
                     UpdateBtn.Content = $"{AppVersion.ShortLabel} - Up To Date";
                     UpdateBtn.IsEnabled = true;
                     UpdateBtn.ToolTip = "Click to check for updates";
+                    UpdateGlow.Stop();
+                    break;
+                case UpdateUiState.Dev:
+                    UpdateBtn.Content = $"{AppVersion.ShortLabel} - Dev build";
+                    UpdateBtn.IsEnabled = false;
+                    UpdateBtn.ToolTip =
+                        "Local development build (bin\\Release\\...).\n" +
+                        "Not installed — auto-update is for the installed app on other PCs.\n" +
+                        "Rebuild with scripts\\Run-Dev.ps1 after every change.";
                     UpdateGlow.Stop();
                     break;
                 case UpdateUiState.Available:
@@ -93,6 +115,12 @@ public partial class MainWindow
     private async void UpdateBtn_Click(object sender, RoutedEventArgs e)
     {
         if (_updateInProgress) return;
+        if (AppVersion.IsDevBuild)
+        {
+            AppendLog("Dev build: updates apply only to the installed app (other PC).", LogCategory.Info);
+            SetUpdateButtonState(UpdateUiState.Dev);
+            return;
+        }
 
         if (_lastUpdateCheck?.UpdateAvailable == true && !string.IsNullOrEmpty(_lastUpdateCheck.DownloadUrl))
         {
@@ -106,6 +134,11 @@ public partial class MainWindow
     private async Task CheckForUpdatesAsync(bool manual)
     {
         if (_updateInProgress) return;
+        if (AppVersion.IsDevBuild)
+        {
+            SetUpdateButtonState(UpdateUiState.Dev);
+            return;
+        }
 
         try
         {

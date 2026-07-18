@@ -1,8 +1,12 @@
 # LOCAL DEVELOPMENT - run this after every code change.
-# Builds Release and starts the ONE dev exe (not Debug, not publish).
+# Builds Release into THE ONLY test location and starts it.
+# Path: bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
+
+$devDir = Join-Path $root "bin\Release\net8.0-windows10.0.19041.0"
+$exe = Join-Path $devDir "IMVUCompanion.exe"
 
 & (Join-Path $PSScriptRoot "Clean-Stale.ps1")
 
@@ -10,22 +14,27 @@ Stop-Process -Name IMVUCompanion -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500
 
 Write-Host ""
-Write-Host "=== IMVU Companion - local dev build (Release) ===" -ForegroundColor Cyan
-dotnet build -c Release
+Write-Host "=== IMVU Companion - DEV build (single location) ===" -ForegroundColor Cyan
+Write-Host "Output: $devDir"
+Write-Host ""
+
+# Framework build only — never -r win-x64 here (that creates bin\...\win-x64 or publish\)
+dotnet build "$root\IMVUCompanion.csproj" -c Release --no-incremental
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$exe = Join-Path $root "bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe"
-if (-not (Test-Path $exe)) { throw "Dev exe not found: $exe" }
+if (-not (Test-Path $exe)) { throw "Dev exe not found after build: $exe" }
 
 $info = Get-Item $exe
+$ver = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exe)
 Write-Host ""
-Write-Host "LOCAL DEV EXE (use only this for testing):" -ForegroundColor Green
+Write-Host "USE ONLY THIS EXE:" -ForegroundColor Green
 Write-Host "  $($info.FullName)"
-Write-Host "  Built: $($info.LastWriteTime)"
+Write-Host "  Built:    $($info.LastWriteTime)"
+Write-Host "  FileVer:  $($ver.FileVersion)"
+Write-Host "  Product:  $($ver.ProductVersion)"
 Write-Host ""
-Write-Host 'For installers / GitHub: .\scripts\Publish-Release.ps1 (only when releasing)' -ForegroundColor DarkGray
+Write-Host "Config (survives rebuild): %LOCALAPPDATA%\IMVUCompanion\" -ForegroundColor DarkGray
+Write-Host "Ship installer:            .\scripts\Ship-Release.ps1" -ForegroundColor DarkGray
 Write-Host ""
 
-# WorkingDirectory = exe folder so any leftover relative paths still resolve;
-# user config is stored under %LOCALAPPDATA%\IMVUCompanion (survives rebuilds/updates).
-Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe -Parent)
+Start-Process -FilePath $exe -WorkingDirectory $devDir

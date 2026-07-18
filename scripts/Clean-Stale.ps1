@@ -1,7 +1,7 @@
 # Removes stale build clutter. Safe anytime.
 # KEEPS:
-#   bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe  (local dev — Run-Dev.ps1)
-#   release\IMVUCompanion-Setup-v*.exe                         (shipped installers only)
+#   bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe  (THE only local test exe)
+#   release\IMVUCompanion-Setup-v*.exe                         (shipped installers only, optional)
 #   source, scripts, installer\, obj\ (rebuild ok)
 $ErrorActionPreference = "Continue"
 $root = Split-Path $PSScriptRoot -Parent
@@ -21,38 +21,76 @@ function Remove-IfExists([string]$path) {
 }
 
 Write-Host "==> Cleaning stale folders under $root"
+Write-Host "    KEEP ONLY: bin\Release\net8.0-windows10.0.19041.0\  (daily test)"
+Write-Host ""
 
 # Debug builds — never used for local testing
 Remove-IfExists (Join-Path $root "bin\Debug")
 
-# Publish is release-only; not the day-to-day test exe
+# RID publish under bin (dotnet publish -r win-x64) — NOT the daily test path
 Remove-IfExists (Join-Path $root "bin\Release\net8.0-windows10.0.19041.0\win-x64")
 
-# All publish outputs (plain + timestamped)
+# All publish / scratch / locked-installer workarounds
 Get-ChildItem $root -Directory -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -eq "publish" -or $_.Name -match '^publish\.' } |
+    Where-Object {
+        $_.Name -eq "publish" -or
+        $_.Name -match '^publish\.' -or
+        $_.Name -match '^release-' -or
+        $_.Name -eq "rfresh" -or
+        $_.Name -eq "release-ok" -or
+        $_.Name -eq "release-fresh" -or
+        $_.Name -eq "release-build" -or
+        $_.Name -eq "release2" -or
+        $_.Name -eq "release-v071"
+    } |
     ForEach-Object { Remove-IfExists $_.FullName }
-
-# Duplicate release output from locked-file workarounds
-Remove-IfExists (Join-Path $root "release-build")
-Remove-IfExists (Join-Path $root "release-v071")
-Remove-IfExists (Join-Path $root "release2")
 
 # Stray logs / temp build noise at repo root
 foreach ($f in @(
     "publish-log.txt", "build-log.txt", "iscc-log.txt",
-    "build-err.txt", "build-out.txt"
+    "build-err.txt", "build-out.txt", "ship-log.txt"
 )) {
     Remove-IfExists (Join-Path $root $f)
 }
 
-# Incomplete / locked installer stubs (keep real full-size setups)
-Get-ChildItem (Join-Path $root "release") -File -ErrorAction SilentlyContinue |
+# One-off ship helper scripts (should never stay in scripts\)
+Get-ChildItem (Join-Path $root "scripts") -File -ErrorAction SilentlyContinue |
     Where-Object {
-        $_.Name -like "IMVUCompanion-Setup-*.exe" -and
-        ($_.Length -lt 20MB -or $_.Name -match '\.old|\.locked|\.stale')
+        $_.Name -match '^ship-0' -or
+        $_.Name -match '^git-push-0' -or
+        $_.Name -eq "run-ship.cmd" -or
+        $_.Name -eq "iscc-once.cmd" -or
+        $_.Name -match '^Finish-Release-v' -or
+        $_.Name -match '^Ship-v' -or
+        $_.Name -match '^Finish-v'
     } |
     ForEach-Object { Remove-IfExists $_.FullName }
+
+# Incomplete / locked installer stubs in release\ (keep full-size setups only)
+if (Test-Path (Join-Path $root "release")) {
+    Get-ChildItem (Join-Path $root "release") -File -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Name -like "IMVUCompanion-Setup-*.exe" -and
+            ($_.Length -lt 20MB -or $_.Name -match '\.old|\.locked|\.stale')
+        } |
+        ForEach-Object { Remove-IfExists $_.FullName }
+}
+
+# Stale messages/commands next to the OLD relative-path locations (config is AppData now)
+$devDir = Join-Path $root "bin\Release\net8.0-windows10.0.19041.0"
+foreach ($f in @("messages.json", "commands.json", "ai_settings.json", "ui_layout.json")) {
+    # Leave them if present — harmless leftovers; optional delete to avoid confusion
+    $p = Join-Path $devDir $f
+    if (Test-Path $p) {
+        try {
+            Remove-Item $p -Force -ErrorAction Stop
+            $script:removed += $p
+            Write-Host "  removed leftover config next to exe (real config is %LOCALAPPDATA%\IMVUCompanion): $f"
+        } catch {
+            Write-Warning "Could not remove $p : $_"
+        }
+    }
+}
 
 Write-Host ""
 if ($removed.Count -eq 0) {
@@ -62,10 +100,11 @@ if ($removed.Count -eq 0) {
 }
 
 Write-Host ""
-Write-Host "KEEP - local daily test (scripts\Run-Dev.ps1):"
+Write-Host "YOUR ONLY LOCAL TEST EXE:" -ForegroundColor Green
 Write-Host "  $root\bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe"
-Write-Host "KEEP - installers for testers:"
-Write-Host "  $root\release\"
+Write-Host "Rebuild/run:  .\scripts\Run-Dev.ps1"
+Write-Host "User config:  %LOCALAPPDATA%\IMVUCompanion\  (messages.json, commands.json)"
+Write-Host "Installers (optional):  $root\release\"
 if (Test-Path (Join-Path $root "release")) {
     Get-ChildItem (Join-Path $root "release") -Filter "*.exe" -ErrorAction SilentlyContinue |
         ForEach-Object { Write-Host ("  {0}  ({1:N1} MB)" -f $_.Name, ($_.Length / 1MB)) }

@@ -69,5 +69,11 @@ if (-not $SkipPush) {
 & (Join-Path $PSScriptRoot "Finish-Release.ps1") -Version $version -SkipPreflight
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+# Final cleanup + ensure dev path matches what was shipped
+& (Join-Path $PSScriptRoot "Clean-Stale.ps1")
+dotnet build "$root\IMVUCompanion.csproj" -c Release --no-incremental | Out-Null
+
 Write-Host ""
 Write-Host "==> Ship-Release complete: $tag"
+Write-Host "==> Local test exe (this PC): $root\bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe"
+Write-Host "==> Installed testers use the GitHub Setup + Update button."
