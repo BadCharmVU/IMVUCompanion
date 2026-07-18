@@ -53,3 +53,23 @@ Desktop.ini
 project.lock.json
 
 # WebView2 profile lives outside project (%LocalAppData%\IMVUCompanion\WebView2) — not in repo
+# Release / publish artifacts (never commit)
+release/
+release-*/
+publish/
+publish.*/
+rfresh/
+*.exe
+!tools/**/*.exe
+ship-log.txt
+iscc-log.txt
+
+# Extra release/publish scratch dirs
+release-*/
+rfresh/
+release-ok/
+release-fresh/
+release-v092/
+ship-log.txt
+build-out.txt
+build-err.txt
