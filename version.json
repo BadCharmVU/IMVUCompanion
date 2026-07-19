@@ -1,6 +1,6 @@
 {
   "version": "0.9.5",
   "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.5/IMVUCompanion-Setup-v0.9.5.exe",
-  "sha256": "PENDING",
-  "releaseNotes": "v0.9.5 — Safer auto-update: installer downloads are checked with SHA-256 from the update channel before install, and only https URLs are used. Update apply scripts use unique temp names and a timeout. Bot Settings list and dialogs refined. AI Settings and AI Providers are not connected yet (still in development; UI only)."
+  "sha256": "558413cbdb3aa2001177dada58814ac27d06e00d174185dace3b667278abc55d",
+  "releaseNotes": "v0.9.5 - Safer auto-update: installer downloads are checked with SHA-256 from the update channel before install, and only https URLs are used. Update apply scripts use unique temp names and a timeout. Bot Settings list and dialogs refined. AI Settings and AI Providers are not connected yet (still in development; UI only)."
 }
