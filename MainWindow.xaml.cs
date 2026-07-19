@@ -134,6 +134,16 @@ public partial class MainWindow : Window
         public string Display => string.IsNullOrWhiteSpace(Command) ? Response : $"{Command} → {Response}";
     }
 
+    /// <summary>Flat row for Bot Settings list (Trigger / Category / Response).</summary>
+    public sealed class CommandRowVm
+    {
+        public string Trigger { get; set; } = "";
+        public string Category { get; set; } = "";
+        public string Response { get; set; } = "";
+        public string CategoryKey { get; set; } = "";
+        public CommandEntry Entry { get; set; } = new();
+    }
+
     private DispatcherTimer _aliveTimer;
     private System.Timers.Timer _robustHeartbeatTimer;
     private DispatcherTimer? _pollTimer;   // for native OCR polling on selected window
@@ -209,15 +219,19 @@ public partial class MainWindow : Window
 
     private WelcomeMsgSet _welcome1 = new() { AsWhisper = false };
     private WelcomeMsgSet _welcome2 = new() { AsWhisper = true };
+    private bool _welcome1Enabled = true; // Greet master switch
     private bool _welcome2Enabled;
     private bool _welcomeUiSyncing;
+    /// <summary>User pressed Pause — processing halted until Resume (session kept).</summary>
+    private bool _botUserPaused;
     /// <summary>
     /// False until LoadMessages finishes. Welcome ComboBox/CheckBox fire SelectionChanged/Checked
     /// during InitializeComponent (IsSelected="True") and would otherwise SaveMessages() with
-    /// empty lists — wiping the user's messages.json every startup. Commands never had this
-    /// auto-save-on-UI-init path, which is why they appeared to "keep" while welcomes reset.
+    /// empty lists — wiping the user's messages.json every startup.
     /// </summary>
     private bool _messagesReady;
+    /// <summary>False until LoadCommands finishes. Blocks OnClosed/accidental saves of empty defaults.</summary>
+    private bool _commandsReady;
     private string? _lastWelcome1Pick;
     private string? _lastWelcome2Pick;
 
@@ -232,6 +246,14 @@ public partial class MainWindow : Window
     private string _commandLanguage = "en";
     private string _activeCommandCategory = "General";
     private ObservableCollection<CommandEntry> _currentCommandsView = new ObservableCollection<CommandEntry>();
+    private bool _listenToChat = true;
+    private string _commandSearchText = "";
+    private string? _commandFilterCategory; // null = All
+    private int _commandsPageIndex; // 0-based
+    private const int CommandsPageSize = 6;
+    private List<CommandRowVm> _commandsFlatFiltered = new();
+    private CommandRowVm? _pendingDeleteRow;
+    private CommandRowVm? _editingCommandRow;
 
     public MainWindow()
     {
@@ -272,9 +294,11 @@ public partial class MainWindow : Window
             LoadMessages();
             SelectAppLanguageCombo(_currentLanguage);
             RefreshWelcomeUi();
+            LayoutWelcomeHeader();
 
             LoadCommands();
             PopulateCategoryCombo();
+            PopulateCategoryFilterCombo();
             if (CommandCategoryCombo.Items.Count > 0)
             {
                 foreach (ComboBoxItem cbi in CommandCategoryCombo.Items)
@@ -291,10 +315,15 @@ public partial class MainWindow : Window
             {
                 _currentCommandCategory = "";
             }
+            if (ListenToChatCheck != null) ListenToChatCheck.IsChecked = _listenToChat;
+            UpdateBotNotListeningHint();
             RefreshCommandsList();
+            RefreshCommandsPagedView();
             if (CategoryNameEditBox != null) CategoryNameEditBox.Text = _currentCommandCategory;
 
             InitAiProvidersUi();
+            if (CompanionAiTriggerBox != null)
+                CompanionAiTriggerBox.Text = _aiSettings.CompanionAiTrigger ?? "";
 
             AppendLog($"{AppVersion.ShortLabel} — {_sessionStartedAt:MM.dd.yyyy - HH:mm:ss}", LogCategory.Info, toActivityLog: true);
             InitAutoUpdateUi();
@@ -440,7 +469,8 @@ public partial class MainWindow : Window
     {
         void setUi()
         {
-            BotToggleBtn.IsEnabled = !busy;
+            if (BotToggleBtn != null) BotToggleBtn.IsEnabled = !busy;
+            if (BotPauseBtn != null) BotPauseBtn.IsEnabled = !busy && _botRunning;
             if (status != null) UpdateStatusText(status);
         }
         if (Dispatcher.CheckAccess()) setUi();
@@ -919,7 +949,27 @@ public partial class MainWindow : Window
 
     private async void BotToggleBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (!_botRunning) await StartBot(); else StopBot();
+        if (!_botRunning)
+        {
+            await StartBot();
+            return;
+        }
+
+        // Running + user-paused → Resume
+        if (_botUserPaused)
+        {
+            await ResumeBotFromUserPauseAsync();
+            return;
+        }
+
+        // Running and active → Stop
+        StopBot();
+    }
+
+    private async void BotPauseBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_botRunning || _botUserPaused) return;
+        await PauseBotFromUserAsync();
     }
 
     private async Task StartBot()
@@ -940,8 +990,7 @@ public partial class MainWindow : Window
             _observerBoundUrl = null;
             _botRunning = true;
             _botPausedNoRoom = false;
-            BotToggleBtn.Content = "Stop Bot";
-            UpdateBotToggleGlow(true);
+            _botUserPaused = false;
             _seenLines.Clear();
             // Full start always resets session stats; pause-for-room does not
             ResetBotSessionStats();
@@ -951,6 +1000,7 @@ public partial class MainWindow : Window
 
             await DiscoverElements();
             await SetupChatObserver();
+            UpdateBotChrome();
             UpdatePageStatus();
             await InitialChatScan();
             AppendActivityLog("[Bot] Started", LogCategory.Info);
@@ -960,9 +1010,9 @@ public partial class MainWindow : Window
             AppendLog("Start error: " + ex.Message, LogCategory.Error);
             _botRunning = false;
             _botPausedNoRoom = false;
-            BotToggleBtn.Content = "Start Bot";
-            UpdateBotToggleGlow(false);
+            _botUserPaused = false;
             PauseBotSessionTimer();
+            UpdateBotChrome();
         }
         finally
         {
@@ -975,14 +1025,87 @@ public partial class MainWindow : Window
     {
         _botRunning = false;
         _botPausedNoRoom = false;
-        BotToggleBtn.Content = "Start Bot";
-        UpdateBotToggleGlow(false);
+        _botUserPaused = false;
         _botCts?.Cancel();
         StopChatQueue();
         _ = StopBotCleanupAsync();
         PauseBotSessionTimer();
+        UpdateBotChrome();
         AppendActivityLog("[Bot] Stopped", LogCategory.Info);
         UpdatePageStatus();
+    }
+
+    /// <summary>User Pause button — freeze processing and timer; keep session stats / greeted set.</summary>
+    private async Task PauseBotFromUserAsync()
+    {
+        if (!_botRunning || _botUserPaused) return;
+        _botUserPaused = true;
+        PauseBotSessionTimer();
+        try { await SetJoinPollPausedAsync(true); } catch { }
+        UpdateBotChrome();
+        AppendActivityLog("[Bot] Paused (session kept)", LogCategory.Info);
+        UpdatePageStatus();
+    }
+
+    /// <summary>User Resume from Pause button / main button.</summary>
+    private async Task ResumeBotFromUserPauseAsync()
+    {
+        if (!_botRunning || !_botUserPaused) return;
+
+        if (!await IsActiveRoomPresentAsync())
+        {
+            AppendActivityLog("[Bot] Cannot resume — no active room.", LogCategory.Warning);
+            return;
+        }
+
+        _botUserPaused = false;
+        _botPausedNoRoom = false;
+        ResumeBotSessionTimer();
+        try
+        {
+            try { await SetJoinPollPausedAsync(false); } catch { }
+            // Observer may still be running if only user-paused without leaving room
+            if (string.IsNullOrEmpty(_observerBoundUrl))
+            {
+                await SetupChatObserver();
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Resume: " + ex.Message, LogCategory.Warning);
+        }
+        UpdateBotChrome();
+        AppendActivityLog("[Bot] Resumed", LogCategory.Info);
+        UpdatePageStatus();
+    }
+
+    /// <summary>Start / Stop / Resume label, Pause visibility, glow target.</summary>
+    private void UpdateBotChrome()
+    {
+        if (BotToggleBtn == null) return;
+
+        if (!_botRunning)
+        {
+            BotToggleBtn.Content = "Start Bot";
+            if (BotPauseBtn != null) BotPauseBtn.Visibility = Visibility.Collapsed;
+            UpdateBotGlowTarget(BotToggleBtn, active: false);
+            return;
+        }
+
+        if (BotPauseBtn != null)
+            BotPauseBtn.Visibility = Visibility.Visible;
+
+        if (_botUserPaused)
+        {
+            BotToggleBtn.Content = "Resume";
+            UpdateBotGlowTarget(BotPauseBtn, active: true);
+        }
+        else
+        {
+            BotToggleBtn.Content = "Stop Bot";
+            // Glow on main Start/Stop while actively running
+            UpdateBotGlowTarget(BotToggleBtn, active: true);
+        }
     }
 
     private async Task StopBotCleanupAsync()
@@ -1003,12 +1126,20 @@ public partial class MainWindow : Window
         PauseBotSessionTimer();
         try { await SetJoinPollPausedAsync(true); } catch { }
         try { await TeardownChatObserverWebView(); } catch { }
+        // Room leave while user-paused: keep user-pause UI; else show as auto-pause on main chrome
+        if (!_botUserPaused)
+        {
+            // Treat like pause for chrome: Resume path via room return; Pause square stays, glow on pause-ish
+            if (BotToggleBtn != null) BotToggleBtn.Content = "Stop Bot";
+            UpdateBotGlowTarget(BotToggleBtn, active: false);
+        }
         AppendActivityLog("[Bot] Paused — left room (timer paused, session kept)", LogCategory.Info);
         UpdatePageStatus();
     }
 
     /// <summary>
     /// Re-entered room while bot still "started" — resume timer/observer, no reset.
+    /// Does not clear a user Pause; user must press Resume.
     /// </summary>
     private async Task ResumeBotAfterRoomAsync()
     {
@@ -1016,6 +1147,14 @@ public partial class MainWindow : Window
         if (!await IsActiveRoomPresentAsync()) return;
 
         _botPausedNoRoom = false;
+        // Stay paused if user explicitly paused
+        if (_botUserPaused)
+        {
+            AppendActivityLog("[Bot] Room back — still user-paused (press Resume)", LogCategory.Info);
+            UpdatePageStatus();
+            return;
+        }
+
         ResumeBotSessionTimer();
         try
         {
@@ -1027,6 +1166,7 @@ public partial class MainWindow : Window
         {
             AppendLog("Resume observer: " + ex.Message, LogCategory.Warning);
         }
+        UpdateBotChrome();
         AppendActivityLog("[Bot] Resumed — room detected", LogCategory.Info);
         UpdatePageStatus();
     }
@@ -1048,9 +1188,9 @@ public partial class MainWindow : Window
     private CancellationToken BotCancellationToken =>
         _botCts?.Token ?? CancellationToken.None;
 
-    /// <summary>Processing only when started, room present, and not cancelled.</summary>
+    /// <summary>Processing only when started, not user-paused, room present, and not cancelled.</summary>
     private bool IsBotActive =>
-        _botRunning && !_botPausedNoRoom && !BotCancellationToken.IsCancellationRequested;
+        _botRunning && !_botUserPaused && !_botPausedNoRoom && !BotCancellationToken.IsCancellationRequested;
 
     // ===== Welcome Settings (msg1 + optional msg2) =====
     private void LoadMessages()
@@ -1058,6 +1198,7 @@ public partial class MainWindow : Window
         _messagesReady = false;
         _welcome1 = new WelcomeMsgSet { AsWhisper = false };
         _welcome2 = new WelcomeMsgSet { AsWhisper = true };
+        _welcome1Enabled = true;
         _welcome2Enabled = false;
         bool fileExisted = File.Exists(MessagesFile);
         try
@@ -1071,6 +1212,9 @@ public partial class MainWindow : Window
                 // New format: msg1 / msg2
                 if (root.TryGetProperty("msg1", out var m1) && m1.ValueKind == JsonValueKind.Object)
                 {
+                    if (m1.TryGetProperty("enabled", out var en1) &&
+                        (en1.ValueKind == JsonValueKind.True || en1.ValueKind == JsonValueKind.False))
+                        _welcome1Enabled = en1.GetBoolean();
                     ReadWelcomeSet(m1, _welcome1);
                     if (root.TryGetProperty("msg2", out var m2) && m2.ValueKind == JsonValueKind.Object)
                     {
@@ -1208,6 +1352,7 @@ public partial class MainWindow : Window
             {
                 msg1 = new
                 {
+                    enabled = _welcome1Enabled,
                     delivery = _welcome1.AsWhisper ? "whisper" : "public",
                     asWhisper = _welcome1.AsWhisper,
                     messages = _welcome1.Messages
@@ -1266,11 +1411,15 @@ public partial class MainWindow : Window
         _welcomeUiSyncing = true;
         try
         {
+            if (Welcome1EnabledCheck != null)
+                Welcome1EnabledCheck.IsChecked = _welcome1Enabled;
             SelectDeliveryCombo(Welcome1DeliveryCombo, _welcome1.AsWhisper);
             SelectDeliveryCombo(Welcome2DeliveryCombo, _welcome2.AsWhisper);
             if (Welcome2EnabledCheck != null)
                 Welcome2EnabledCheck.IsChecked = _welcome2Enabled;
+            UpdateWelcome1PanelVisibility();
             UpdateWelcome2PanelVisibility();
+            UpdateWelcomeNotGreetingHint();
             RefreshWelcomeList(1);
             RefreshWelcomeList(2);
         }
@@ -1291,13 +1440,347 @@ public partial class MainWindow : Window
         }
     }
 
+    private void UpdateWelcome1PanelVisibility()
+    {
+        // Dropdown may disappear when Greeting is off; list/edit stay fully editable
+        if (Welcome1DeliveryCombo != null)
+            Welcome1DeliveryCombo.Visibility = _welcome1Enabled ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void UpdateWelcome2PanelVisibility()
     {
         bool on = _welcome2Enabled;
         if (Welcome2DeliveryCombo != null)
             Welcome2DeliveryCombo.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
         if (Welcome2Panel != null)
+        {
             Welcome2Panel.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            Welcome2Panel.Margin = on ? new Thickness(0, 6, 0, 0) : new Thickness(0);
+        }
+    }
+
+    private void UpdateWelcomeNotGreetingHint()
+    {
+        if (WelcomeNotGreetingHint == null) return;
+        bool none = !_welcome1Enabled && !_welcome2Enabled;
+        WelcomeNotGreetingHint.Visibility = none ? Visibility.Visible : Visibility.Collapsed;
+        LayoutWelcomeHeader();
+    }
+
+    /// <summary>
+    /// Expander header content does not stretch by default — force full width so
+    /// "Bot is Not Greeting" can sit on the far right.
+    /// </summary>
+    private void WelcomeSettingsExpander_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        LayoutWelcomeHeader();
+
+    private void WelcomeSettingsExpander_Layout(object sender, RoutedEventArgs e) =>
+        LayoutWelcomeHeader();
+
+    private void LayoutWelcomeHeader()
+    {
+        if (WelcomeSettingsExpander == null || WelcomeHeaderRoot == null) return;
+        // SectionExpander: 10px pad L/R + 22px toggle column
+        double w = WelcomeSettingsExpander.ActualWidth - 42;
+        if (w > 80)
+            WelcomeHeaderRoot.Width = w;
+    }
+
+    private void BotSettingsExpander_SizeChanged(object sender, SizeChangedEventArgs e) => LayoutBotSettingsHeader();
+    private void BotSettingsExpander_Layout(object sender, RoutedEventArgs e) => LayoutBotSettingsHeader();
+
+    private void LayoutBotSettingsHeader()
+    {
+        if (BotSettingsExpander == null || BotSettingsHeaderRoot == null) return;
+        double w = BotSettingsExpander.ActualWidth - 42;
+        if (w > 80)
+            BotSettingsHeaderRoot.Width = w;
+    }
+
+    /// <summary>
+    /// Nested ListBox/TextBox capture the mouse wheel; always scroll the settings panel instead.
+    /// </summary>
+    private void SettingsScrollViewer_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    {
+        if (sender is not ScrollViewer sv) return;
+        sv.ScrollToVerticalOffset(sv.VerticalOffset - e.Delta / 3.0);
+        e.Handled = true;
+    }
+
+    private void NestedControl_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    {
+        if (SettingsScrollViewer == null) return;
+        SettingsScrollViewer.ScrollToVerticalOffset(SettingsScrollViewer.VerticalOffset - e.Delta / 3.0);
+        e.Handled = true;
+    }
+
+    /// <summary>Replace known placeholders in templates (extensible for future calls).</summary>
+    private static string ApplyMessageTemplate(string template, string speakerName)
+    {
+        if (string.IsNullOrEmpty(template)) return template ?? "";
+        string name = speakerName ?? "";
+        return template
+            .Replace("{name}", name, StringComparison.OrdinalIgnoreCase)
+            .Replace("{Name}", name, StringComparison.Ordinal);
+    }
+
+    private static bool TemplateHasNamePlaceholder(string? template) =>
+        !string.IsNullOrEmpty(template) &&
+        template.Contains("{name}", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Public replies: prefix "Name, " only when response does not already use {name}.
+    /// </summary>
+    private static string FormatPublicCommandReply(string speaker, string bodyAfterTemplate, bool hasNameInTemplate)
+    {
+        if (hasNameInTemplate)
+            return bodyAfterTemplate;
+        return $"{speaker}, {bodyAfterTemplate}";
+    }
+
+    private void CommandRowEdit_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not CommandRowVm row) return;
+        e.Handled = true;
+        // Do not select / rebind the table — that used to scroll row 1 off-screen on the last row.
+        _editingCommandRow = row;
+        _currentCommandCategory = row.CategoryKey;
+        _activeCommandCategory = row.CategoryKey;
+        if (CommandEditBox != null) CommandEditBox.Text = row.Trigger;
+        if (CommandResponseEditBox != null) CommandResponseEditBox.Text = row.Response;
+        if (CategoryNameEditBox != null) CategoryNameEditBox.Text = row.CategoryKey;
+        UpdateCommandModalPlaceholders();
+        SetCommandCategoryComboQuiet(row.CategoryKey);
+        if (CommandsList != null) CommandsList.SelectedItem = row.Entry;
+        HideCategorySubRows();
+        if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Visible;
+        UpdateCommandModalSaveEnabled();
+        if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Visible;
+    }
+
+    private void CommandRowDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not CommandRowVm row) return;
+        e.Handled = true;
+        _pendingDeleteRow = row;
+        string trigger = string.IsNullOrWhiteSpace(row.Trigger) ? "(empty)" : row.Trigger;
+        string cat = string.IsNullOrWhiteSpace(row.Category) ? "(none)" : row.Category;
+        if (DeleteCommandMessage != null)
+            DeleteCommandMessage.Text =
+                "You are about to\npermanently delete\n" +
+                $"trigger - {trigger}\n" +
+                $"category - {cat}";
+        if (DeleteCommandOverlay != null)
+            DeleteCommandOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void DeleteCommandCancel_Click(object sender, RoutedEventArgs e)
+    {
+        bool wasEditing = _editingCommandRow != null;
+        _pendingDeleteRow = null;
+        if (DeleteCommandOverlay != null)
+            DeleteCommandOverlay.Visibility = Visibility.Collapsed;
+        if (wasEditing && AddCommandModal != null)
+            AddCommandModal.Visibility = Visibility.Visible;
+    }
+
+    private void DeleteCommandConfirm_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pendingDeleteRow == null)
+        {
+            DeleteCommandCancel_Click(sender, e);
+            return;
+        }
+        var row = _pendingDeleteRow;
+        _pendingDeleteRow = null;
+        _editingCommandRow = null;
+        if (DeleteCommandOverlay != null)
+            DeleteCommandOverlay.Visibility = Visibility.Collapsed;
+        if (AddCommandModal != null)
+            AddCommandModal.Visibility = Visibility.Collapsed;
+        if (CommandModalDeleteBtn != null)
+            CommandModalDeleteBtn.Visibility = Visibility.Collapsed;
+
+        _currentCommandCategory = row.CategoryKey;
+        if (_commandCategories.TryGetValue(row.CategoryKey, out var langDict) &&
+            langDict.TryGetValue(_commandLanguage, out var underlying))
+        {
+            underlying.RemoveAll(c =>
+                string.Equals(c.Command, row.Entry.Command, StringComparison.OrdinalIgnoreCase) &&
+                c.Response == row.Entry.Response);
+            underlying.Remove(row.Entry);
+
+            // Drop empty languages then empty category
+            if (underlying.Count == 0)
+                langDict.Remove(_commandLanguage);
+            bool categoryEmpty = langDict.Count == 0 || langDict.Values.All(l => l == null || l.Count == 0);
+            if (categoryEmpty)
+            {
+                _commandCategories.Remove(row.CategoryKey);
+                if (string.Equals(_currentCommandCategory, row.CategoryKey, StringComparison.OrdinalIgnoreCase))
+                    _currentCommandCategory = _commandCategories.Keys.FirstOrDefault() ?? "General";
+                if (string.Equals(_activeCommandCategory, row.CategoryKey, StringComparison.OrdinalIgnoreCase))
+                    _activeCommandCategory = _currentCommandCategory;
+                PopulateCategoryCombo();
+                PopulateCategoryFilterCombo();
+            }
+
+            RefreshCommandsList();
+            SaveCommands();
+        }
+    }
+
+    private static readonly SolidColorBrush ModalFieldBorderNormal =
+        new(System.Windows.Media.Color.FromRgb(0x3A, 0x3A, 0x58));
+    private static readonly SolidColorBrush ModalFieldBorderError =
+        new(System.Windows.Media.Color.FromRgb(0xEF, 0x44, 0x44));
+
+    private void ShowUpdateCategoryRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (AddCategoryRow != null) AddCategoryRow.Visibility = Visibility.Collapsed;
+        RestoreCategoryComboAfterAddMode();
+        if (UpdateCategoryRow != null)
+        {
+            UpdateCategoryRow.Visibility = Visibility.Visible;
+            if (CategoryNameEditBox != null)
+                CategoryNameEditBox.Text = _currentCommandCategory;
+            ClearModalFieldErrors();
+            UpdateCommandModalPlaceholders();
+            UpdateCommandModalSaveEnabled();
+        }
+    }
+
+    private void ShowAddCategoryRow_Click(object sender, RoutedEventArgs e)
+    {
+        if (UpdateCategoryRow != null) UpdateCategoryRow.Visibility = Visibility.Collapsed;
+        if (AddCategoryRow != null)
+        {
+            AddCategoryRow.Visibility = Visibility.Visible;
+            if (NewCategoryTextBox != null) NewCategoryTextBox.Text = "";
+            // No category selected in dropdown while creating a new one — avoids wrong assignment
+            if (CommandCategoryCombo != null)
+            {
+                CommandCategoryCombo.Items.Clear();
+                CommandCategoryCombo.SelectedIndex = -1;
+                CommandCategoryCombo.IsEnabled = false;
+            }
+            ClearModalFieldErrors();
+            UpdateCommandModalPlaceholders();
+            UpdateCommandModalSaveEnabled();
+        }
+    }
+
+    private void HideCategorySubRows()
+    {
+        if (UpdateCategoryRow != null) UpdateCategoryRow.Visibility = Visibility.Collapsed;
+        if (AddCategoryRow != null) AddCategoryRow.Visibility = Visibility.Collapsed;
+        RestoreCategoryComboAfterAddMode();
+        ClearModalFieldErrors();
+    }
+
+    private void RestoreCategoryComboAfterAddMode()
+    {
+        if (CommandCategoryCombo == null) return;
+        if (!CommandCategoryCombo.IsEnabled || CommandCategoryCombo.Items.Count == 0)
+        {
+            CommandCategoryCombo.IsEnabled = true;
+            PopulateCategoryCombo();
+            EnsureCategoryComboSelected();
+        }
+    }
+
+    private void CommandModalFields_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (sender is TextBox tb)
+            SetModalFieldError(tb, false);
+        UpdateCommandModalPlaceholders();
+        UpdateCommandModalSaveEnabled();
+    }
+
+    private void CategoryNameEditBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (CategoryNameEditBox != null)
+            SetModalFieldError(CategoryNameEditBox, false);
+        UpdateCommandModalPlaceholders();
+        UpdateCommandModalSaveEnabled();
+    }
+
+    private void NewCategoryTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (NewCategoryTextBox != null)
+            SetModalFieldError(NewCategoryTextBox, false);
+        UpdateCommandModalPlaceholders();
+        UpdateCommandModalSaveEnabled();
+    }
+
+    private void UpdateCommandModalPlaceholders()
+    {
+        if (CommandEditPlaceholder != null)
+            CommandEditPlaceholder.Visibility = string.IsNullOrEmpty(CommandEditBox?.Text)
+                ? Visibility.Visible : Visibility.Collapsed;
+        if (CommandResponsePlaceholder != null)
+            CommandResponsePlaceholder.Visibility = string.IsNullOrEmpty(CommandResponseEditBox?.Text)
+                ? Visibility.Visible : Visibility.Collapsed;
+        if (CategoryNamePlaceholder != null)
+            CategoryNamePlaceholder.Visibility = string.IsNullOrEmpty(CategoryNameEditBox?.Text)
+                ? Visibility.Visible : Visibility.Collapsed;
+        if (NewCategoryPlaceholder != null)
+            NewCategoryPlaceholder.Visibility = string.IsNullOrEmpty(NewCategoryTextBox?.Text)
+                ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>Save is always clickable; validation + red borders run on click.</summary>
+    private void UpdateCommandModalSaveEnabled()
+    {
+        if (CommandModalSaveBtn == null) return;
+        CommandModalSaveBtn.IsEnabled = true;
+        CommandModalSaveBtn.Opacity = 1.0;
+    }
+
+    private void SetModalFieldError(TextBox? box, bool error)
+    {
+        if (box == null) return;
+        box.BorderBrush = error ? ModalFieldBorderError : ModalFieldBorderNormal;
+    }
+
+    private void ClearModalFieldErrors()
+    {
+        SetModalFieldError(CommandEditBox, false);
+        SetModalFieldError(CommandResponseEditBox, false);
+        SetModalFieldError(CategoryNameEditBox, false);
+        SetModalFieldError(NewCategoryTextBox, false);
+    }
+
+    private void EnsureCategoryComboSelected()
+    {
+        if (CommandCategoryCombo == null) return;
+        if (CommandCategoryCombo.Items.Count == 0)
+        {
+            PopulateCategoryCombo();
+        }
+        if (CommandCategoryCombo.Items.Count == 0) return;
+
+        string want = _editingCommandRow?.CategoryKey
+                      ?? (string.IsNullOrEmpty(_currentCommandCategory) ? "General" : _currentCommandCategory);
+
+        foreach (ComboBoxItem cbi in CommandCategoryCombo.Items)
+        {
+            if (string.Equals(cbi.Content?.ToString(), want, StringComparison.OrdinalIgnoreCase))
+            {
+                CommandCategoryCombo.SelectedItem = cbi;
+                return;
+            }
+        }
+        CommandCategoryCombo.SelectedIndex = 0;
+        if (CommandCategoryCombo.SelectedItem is ComboBoxItem first)
+            _currentCommandCategory = first.Content?.ToString() ?? "General";
+    }
+
+    private void UpdateBotNotListeningHint()
+    {
+        if (BotNotListeningHint == null) return;
+        BotNotListeningHint.Visibility = _listenToChat ? Visibility.Collapsed : Visibility.Visible;
+        LayoutBotSettingsHeader();
     }
 
     private void RefreshWelcomeList(int which)
@@ -1327,15 +1810,37 @@ public partial class MainWindow : Window
             RefreshWelcomeList(1);
             RefreshWelcomeList(2);
             RefreshCommandsList();
+            RefreshCommandsPagedView();
         }
     }
 
     private ButtonGlowAnimator? _botGlowAnimator;
+    private Button? _botGlowHost;
+
+    /// <summary>Move animated border to the given button (Start/Stop or Pause).</summary>
+    private void UpdateBotGlowTarget(Button? host, bool active)
+    {
+        if (host == null)
+        {
+            _botGlowAnimator?.Stop();
+            _botGlowHost = null;
+            return;
+        }
+
+        if (_botGlowHost != host)
+        {
+            _botGlowAnimator?.Stop();
+            _botGlowAnimator = new ButtonGlowAnimator(host);
+            _botGlowHost = host;
+        }
+
+        _botGlowAnimator!.SetActive(active);
+    }
 
     private void UpdateBotToggleGlow(bool running)
     {
-        if (BotToggleBtn == null) return;
-        (_botGlowAnimator ??= new ButtonGlowAnimator(BotToggleBtn)).SetActive(running);
+        // Back-compat helper: running → glow on main toggle
+        UpdateBotGlowTarget(BotToggleBtn, running);
     }
 
     private void SelectAppLanguageCombo(string lang)
@@ -1381,6 +1886,15 @@ public partial class MainWindow : Window
         SaveMessages();
     }
 
+    private void Welcome1EnabledCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_messagesReady || _welcomeUiSyncing) return;
+        _welcome1Enabled = Welcome1EnabledCheck?.IsChecked == true;
+        UpdateWelcome1PanelVisibility();
+        UpdateWelcomeNotGreetingHint();
+        SaveMessages();
+    }
+
     private void Welcome2EnabledCheck_Changed(object sender, RoutedEventArgs e)
     {
         if (!_messagesReady || _welcomeUiSyncing) return;
@@ -1395,6 +1909,7 @@ public partial class MainWindow : Window
             finally { _welcomeUiSyncing = false; }
         }
         UpdateWelcome2PanelVisibility();
+        UpdateWelcomeNotGreetingHint();
         SaveMessages();
     }
 
@@ -1490,20 +2005,42 @@ public partial class MainWindow : Window
     }
 
     // ===== !Commands management (category -> lang -> list<CommandEntry>) =====
-    private static List<CommandEntry> DefaultCommandsEn() => new List<CommandEntry>
+    /// <summary>First-install samples only (!hi Social, !help/!stats General, !rules Info).</summary>
+    private static Dictionary<string, Dictionary<string, List<CommandEntry>>> CreateSampleCommandCategories()
     {
-        new CommandEntry { Command = "!hi", Response = "Hello there!" },
-        new CommandEntry { Command = "!hello", Response = "Hey! How's it going?" },
-        new CommandEntry { Command = "!help", Response = "Commands: !hi !hello !wave !thanks !bbot" },
-        new CommandEntry { Command = "!wave", Response = "*waves enthusiastically*" },
-        new CommandEntry { Command = "!thanks", Response = "You're welcome!" },
-        new CommandEntry { Command = "!bot", Response = "I'm here. Type !help for commands." }
-    };
+        return new Dictionary<string, Dictionary<string, List<CommandEntry>>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["General"] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["en"] = new List<CommandEntry>
+                {
+                    new CommandEntry { Command = "!help", Response = "Try !hi, !stats, or !rules." },
+                    new CommandEntry { Command = "!stats", Response = "{session_stats}" }
+                }
+            },
+            ["Social"] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["en"] = new List<CommandEntry>
+                {
+                    new CommandEntry { Command = "!hi", Response = "Hello {name}! Welcome!" }
+                }
+            },
+            ["Info"] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["en"] = new List<CommandEntry>
+                {
+                    new CommandEntry { Command = "!rules", Response = "Be kind and have fun, {name}." }
+                }
+            }
+        };
+    }
 
     private void LoadCommands()
     {
-        _commandCategories.Clear();
+        _commandsReady = false;
+        _commandCategories = new Dictionary<string, Dictionary<string, List<CommandEntry>>>(StringComparer.OrdinalIgnoreCase);
         _activeCommandCategory = "General";
+        _listenToChat = true;
         bool fileExisted = File.Exists(CommandsFile);
         try
         {
@@ -1515,75 +2052,134 @@ public partial class MainWindow : Window
 
                 if (root.TryGetProperty("activeCategory", out var ac) && ac.ValueKind == JsonValueKind.String)
                     _activeCommandCategory = ac.GetString() ?? "General";
+                if (root.TryGetProperty("listenToChat", out var lc) &&
+                    (lc.ValueKind == JsonValueKind.True || lc.ValueKind == JsonValueKind.False))
+                    _listenToChat = lc.GetBoolean();
 
-                JsonElement catsEl = default;
-                if (root.TryGetProperty("categories", out catsEl) && catsEl.ValueKind == JsonValueKind.Object) { }
-                else catsEl = root;
-
-                var loaded = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<CommandEntry>>>>(catsEl.GetRawText());
-                if (loaded != null) _commandCategories = loaded;
+                if (root.TryGetProperty("categories", out var catsEl) && catsEl.ValueKind == JsonValueKind.Object)
+                {
+                    var loaded = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<CommandEntry>>>>(catsEl.GetRawText());
+                    if (loaded != null)
+                        _commandCategories = NormalizeCommandCategories(loaded);
+                }
             }
         }
-        catch (Exception ex) { AppendLog("Load commands err: " + ex.Message); }
+        catch (Exception ex) { AppendLog("Load commands err: " + ex.Message, LogCategory.Error); }
 
+        // First install only — never wipe an existing file (same rule as messages.json).
+        // Do NOT re-seed on samplesVersion bumps or language-filtered zero counts.
         if (!fileExisted)
         {
-            _commandCategories["General"] = new Dictionary<string, List<CommandEntry>>
-            {
-                ["en"] = DefaultCommandsEn(),
-                ["ru"] = new List<CommandEntry>
-                {
-                    new CommandEntry { Command = "!hi", Response = "Привет!" },
-                    new CommandEntry { Command = "!hello", Response = "Здравствуй! Как дела?" },
-                    new CommandEntry { Command = "!help", Response = "Команды: !hi !hello !wave !thanks" },
-                    new CommandEntry { Command = "!wave", Response = "*машет рукой*" },
-                    new CommandEntry { Command = "!thanks", Response = "Пожалуйста!" },
-                    new CommandEntry { Command = "!bot", Response = "Я здесь. Напиши !help для списка команд." }
-                }
-            };
+            _commandCategories = CreateSampleCommandCategories();
             _activeCommandCategory = "General";
+            _listenToChat = true;
+            _commandsReady = true;
             SaveCommands();
+            AppendLog("Bot Settings: first run — sample commands written to %LOCALAPPDATA%\\IMVUCompanion\\commands.json", LogCategory.Info);
+        }
+        else
+        {
+            int total = CountAllCommandsAcrossLanguages();
+            AppendLog($"Bot Settings loaded ({total} command(s), {_commandCategories.Count} categor(ies)) from %LOCALAPPDATA%\\IMVUCompanion\\commands.json", LogCategory.Info);
         }
 
         if (string.IsNullOrEmpty(_activeCommandCategory) || !_commandCategories.ContainsKey(_activeCommandCategory))
             _activeCommandCategory = _commandCategories.Keys.FirstOrDefault() ?? "General";
 
         _currentCommandCategory = _activeCommandCategory;
+        _commandsReady = true;
+    }
+
+    /// <summary>Case-insensitive maps + drop empty language lists left by older builds.</summary>
+    private static Dictionary<string, Dictionary<string, List<CommandEntry>>> NormalizeCommandCategories(
+        Dictionary<string, Dictionary<string, List<CommandEntry>>> raw)
+    {
+        var result = new Dictionary<string, Dictionary<string, List<CommandEntry>>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var catKv in raw)
+        {
+            if (string.IsNullOrWhiteSpace(catKv.Key) || catKv.Value == null) continue;
+            var langs = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var langKv in catKv.Value)
+            {
+                if (string.IsNullOrWhiteSpace(langKv.Key) || langKv.Value == null) continue;
+                // Keep empty lists out of memory/file so language switch never "hides" other langs
+                if (langKv.Value.Count == 0) continue;
+                langs[langKv.Key.Trim()] = langKv.Value;
+            }
+            result[catKv.Key.Trim()] = langs;
+        }
+        return result;
     }
 
     private void SaveCommands()
     {
+        // Same guard as SaveMessages — never flush empty defaults over user data before load.
+        if (!_commandsReady)
+            return;
+
         try
         {
             Directory.CreateDirectory(UserDataPaths.Root);
-            _activeCommandCategory = _currentCommandCategory;
-            var toSave = new { activeCategory = _activeCommandCategory, categories = _commandCategories };
+            if (!string.IsNullOrEmpty(_currentCommandCategory))
+                _activeCommandCategory = _currentCommandCategory;
+
+            // Persist without empty language buckets
+            var clean = NormalizeCommandCategories(_commandCategories);
+            _commandCategories = clean;
+
+            var toSave = new
+            {
+                listenToChat = _listenToChat,
+                activeCategory = _activeCommandCategory,
+                categories = _commandCategories
+            };
             string json = JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(CommandsFile, json);
-            AppendLog("!Commands saved to commands.json.");
+            // Atomic write (same pattern as messages.json)
+            string tmp = CommandsFile + ".tmp";
+            File.WriteAllText(tmp, json);
+            File.Copy(tmp, CommandsFile, overwrite: true);
+            try { File.Delete(tmp); } catch { }
         }
         catch (Exception ex) { AppendLog("Save commands err: " + ex.Message, LogCategory.Error); }
+    }
+
+    /// <summary>Get or create the command list for category + current UI language (mutations only).</summary>
+    private List<CommandEntry> EnsureCommandLangList(string category)
+    {
+        if (string.IsNullOrWhiteSpace(category)) category = "General";
+        if (!_commandCategories.ContainsKey(category))
+            _commandCategories[category] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+        var langs = _commandCategories[category];
+        if (!langs.TryGetValue(_commandLanguage, out var list) || list == null)
+        {
+            list = new List<CommandEntry>();
+            langs[_commandLanguage] = list;
+        }
+        return list;
+    }
+
+    private static List<CommandEntry> GetCommandLangListOrEmpty(
+        Dictionary<string, List<CommandEntry>> langDict, string lang)
+    {
+        if (langDict.TryGetValue(lang, out var list) && list != null)
+            return list;
+        return new List<CommandEntry>();
     }
 
     private Dictionary<string, string> GetActiveCommandReplies()
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        string cat = string.IsNullOrEmpty(_activeCommandCategory) ? _currentCommandCategory : _activeCommandCategory;
-        if (!_commandCategories.TryGetValue(cat, out var langDict))
-            return result;
+        if (!_listenToChat) return result;
 
-        List<CommandEntry>? list = null;
-        if (langDict.TryGetValue(_commandLanguage, out var langList) && langList.Count > 0)
-            list = langList;
-        else if (langDict.TryGetValue("en", out var enList) && enList.Count > 0)
-            list = enList;
-
-        if (list == null) return result;
-        foreach (var entry in list)
+        // Current language only — same !cmd may have a different Response per language
+        foreach (var catKv in _commandCategories)
         {
-            string cmd = NormalizeCommand(entry.Command);
-            if (!string.IsNullOrWhiteSpace(cmd) && !string.IsNullOrWhiteSpace(entry.Response))
-                result[cmd] = entry.Response;
+            foreach (var entry in GetCommandLangListOrEmpty(catKv.Value, _commandLanguage))
+            {
+                string cmd = NormalizeCommand(entry.Command);
+                if (!string.IsNullOrWhiteSpace(cmd) && !string.IsNullOrWhiteSpace(entry.Response))
+                    result[cmd] = entry.Response;
+            }
         }
         return result;
     }
@@ -1599,46 +2195,214 @@ public partial class MainWindow : Window
     private void PopulateCategoryCombo()
     {
         if (CommandCategoryCombo == null) return;
+        string? keep = (CommandCategoryCombo.SelectedItem as ComboBoxItem)?.Content?.ToString()
+                       ?? _currentCommandCategory;
         CommandCategoryCombo.Items.Clear();
         foreach (var key in _commandCategories.Keys)
             CommandCategoryCombo.Items.Add(new ComboBoxItem { Content = key });
+        if (CommandCategoryCombo.Items.Count == 0) return;
+        // Always show a real category (never blank)
+        bool selected = false;
+        if (!string.IsNullOrEmpty(keep))
+        {
+            foreach (ComboBoxItem cbi in CommandCategoryCombo.Items)
+            {
+                if (string.Equals(cbi.Content?.ToString(), keep, StringComparison.OrdinalIgnoreCase))
+                {
+                    CommandCategoryCombo.SelectedItem = cbi;
+                    selected = true;
+                    break;
+                }
+            }
+        }
+        if (!selected)
+            CommandCategoryCombo.SelectedIndex = 0;
     }
 
-    private void RefreshCommandsList()
+    private void PopulateCategoryFilterCombo()
     {
-        if (CommandsList == null || CommandEditBox == null || CommandResponseEditBox == null || _currentCommandsView == null) return;
+        if (CommandCategoryFilterCombo == null) return;
+        string? prev = (CommandCategoryFilterCombo.SelectedItem as ComboBoxItem)?.Content?.ToString();
+        CommandCategoryFilterCombo.Items.Clear();
+        CommandCategoryFilterCombo.Items.Add(new ComboBoxItem { Content = "All categories", Tag = "" });
+        foreach (var key in _commandCategories.Keys)
+            CommandCategoryFilterCombo.Items.Add(new ComboBoxItem { Content = key, Tag = key });
+        if (!string.IsNullOrEmpty(prev))
+        {
+            foreach (ComboBoxItem cbi in CommandCategoryFilterCombo.Items)
+            {
+                if (string.Equals(cbi.Content?.ToString(), prev, StringComparison.OrdinalIgnoreCase))
+                {
+                    CommandCategoryFilterCombo.SelectedItem = cbi;
+                    return;
+                }
+            }
+        }
+        CommandCategoryFilterCombo.SelectedIndex = 0;
+    }
+
+    /// <summary>Commands for the active UI language only.</summary>
+    private int CountAllCommands()
+    {
+        int n = 0;
+        foreach (var cat in _commandCategories.Values)
+            n += GetCommandLangListOrEmpty(cat, _commandLanguage).Count;
+        return n;
+    }
+
+    /// <summary>Total across every language (load log / integrity only).</summary>
+    private int CountAllCommandsAcrossLanguages()
+    {
+        int n = 0;
+        foreach (var cat in _commandCategories.Values)
+        {
+            foreach (var list in cat.Values)
+                if (list != null) n += list.Count;
+        }
+        return n;
+    }
+
+    private List<CommandRowVm> BuildFlatCommandRows()
+    {
+        var rows = new List<CommandRowVm>();
+        string q = (_commandSearchText ?? "").Trim();
+        foreach (var catKv in _commandCategories)
+        {
+            if (!string.IsNullOrEmpty(_commandFilterCategory) &&
+                !string.Equals(catKv.Key, _commandFilterCategory, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Current language only — do not fall back to en (that made categories "disappear" unevenly)
+            foreach (var entry in GetCommandLangListOrEmpty(catKv.Value, _commandLanguage))
+            {
+                if (!string.IsNullOrEmpty(q))
+                {
+                    bool hit =
+                        (entry.Command ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                        (entry.Response ?? "").Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                        catKv.Key.Contains(q, StringComparison.OrdinalIgnoreCase);
+                    if (!hit) continue;
+                }
+                rows.Add(new CommandRowVm
+                {
+                    Trigger = entry.Command,
+                    Category = catKv.Key,
+                    Response = entry.Response,
+                    CategoryKey = catKv.Key,
+                    Entry = entry
+                });
+            }
+        }
+        return rows;
+    }
+
+    private void RefreshCommandsPagedView()
+    {
+        _commandsFlatFiltered = BuildFlatCommandRows();
+        int total = _commandsFlatFiltered.Count;
+        int allCount = CountAllCommands();
+        int pages = Math.Max(1, (int)Math.Ceiling(total / (double)CommandsPageSize));
+        if (_commandsPageIndex >= pages) _commandsPageIndex = pages - 1;
+        if (_commandsPageIndex < 0) _commandsPageIndex = 0;
+
+        var page = _commandsFlatFiltered
+            .Skip(_commandsPageIndex * CommandsPageSize)
+            .Take(CommandsPageSize)
+            .ToList();
+
+        if (CommandsListView != null)
+            CommandsListView.ItemsSource = page;
+        if (CommandsTotalText != null)
+            CommandsTotalText.Text = $"{total} commands total";
+        if (CommandsPageText != null)
+            CommandsPageText.Text = $"{_commandsPageIndex + 1}";
+        if (CommandsAllFilterBtn != null)
+            CommandsAllFilterBtn.Content = $"All ({allCount})";
+
+        // Dim pagination when there is nothing that way
+        if (CommandsPagePrevBtn != null)
+        {
+            bool canPrev = _commandsPageIndex > 0;
+            CommandsPagePrevBtn.IsEnabled = canPrev;
+            CommandsPagePrevBtn.Opacity = canPrev ? 1.0 : 0.35;
+        }
+        if (CommandsPageNextBtn != null)
+        {
+            bool canNext = _commandsPageIndex < pages - 1;
+            CommandsPageNextBtn.IsEnabled = canNext;
+            CommandsPageNextBtn.Opacity = canNext ? 1.0 : 0.35;
+        }
+    }
+
+    private void SyncCurrentCommandsViewOnly()
+    {
+        if (_currentCommandsView == null) return;
 
         if (string.IsNullOrEmpty(_currentCommandCategory))
         {
             _currentCommandsView.Clear();
-            CommandsList.ItemsSource = _currentCommandsView;
-            CommandEditBox.Text = "";
-            CommandResponseEditBox.Text = "";
+            if (CommandsList != null) CommandsList.ItemsSource = _currentCommandsView;
             return;
         }
 
-        if (!_commandCategories.ContainsKey(_currentCommandCategory))
-            _commandCategories[_currentCommandCategory] = new Dictionary<string, List<CommandEntry>>();
-        if (!_commandCategories[_currentCommandCategory].ContainsKey(_commandLanguage))
-            _commandCategories[_currentCommandCategory][_commandLanguage] = new List<CommandEntry>();
+        // Do NOT auto-create empty language buckets — that used to hide en commands when switching language.
+        List<CommandEntry> list =
+            _commandCategories.TryGetValue(_currentCommandCategory, out var langs)
+                ? GetCommandLangListOrEmpty(langs, _commandLanguage)
+                : new List<CommandEntry>();
 
-        var list = _commandCategories[_currentCommandCategory][_commandLanguage];
         _currentCommandsView.Clear();
         foreach (var c in list) _currentCommandsView.Add(c);
-        CommandsList.ItemsSource = _currentCommandsView;
-        CommandEditBox.Text = "";
-        CommandResponseEditBox.Text = "";
+        if (CommandsList != null) CommandsList.ItemsSource = _currentCommandsView;
+    }
+
+    private void RefreshCommandsList()
+    {
+        if (CommandEditBox == null || CommandResponseEditBox == null) return;
+        SyncCurrentCommandsViewOnly();
+        RefreshCommandsPagedView();
+    }
+
+    /// <summary>When true, category combo changes do not rebind the paged commands table.</summary>
+    private bool _commandCategoryComboQuiet;
+
+    private void SetCommandCategoryComboQuiet(string? categoryKey)
+    {
+        if (CommandCategoryCombo == null) return;
+        _commandCategoryComboQuiet = true;
+        try
+        {
+            ComboBoxItem? match = null;
+            foreach (ComboBoxItem cbi in CommandCategoryCombo.Items)
+            {
+                if (string.Equals(cbi.Content?.ToString(), categoryKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    match = cbi;
+                    break;
+                }
+            }
+            if (match != null)
+                CommandCategoryCombo.SelectedItem = match;
+            else if (CommandCategoryCombo.Items.Count > 0)
+                EnsureCategoryComboSelected();
+        }
+        finally
+        {
+            _commandCategoryComboQuiet = false;
+        }
     }
 
     private void CommandCategoryCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_commandCategoryComboQuiet) return;
         if (CommandCategoryCombo == null || CommandCategoryCombo.SelectedItem == null) return;
         if (CommandCategoryCombo.SelectedItem is ComboBoxItem item)
         {
             _currentCommandCategory = item.Content?.ToString() ?? "";
             _activeCommandCategory = _currentCommandCategory;
             if (CategoryNameEditBox != null) CategoryNameEditBox.Text = _currentCommandCategory;
-            RefreshCommandsList();
+            // Modal category only — never rebind the Bot Settings page table (caused list jump).
+            SyncCurrentCommandsViewOnly();
         }
     }
 
@@ -1652,120 +2416,383 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ListenToChatCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        _listenToChat = ListenToChatCheck?.IsChecked == true;
+        UpdateBotNotListeningHint();
+        SaveCommands();
+    }
+
+    private void CommandSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        _commandSearchText = CommandSearchBox?.Text ?? "";
+        if (CommandSearchPlaceholder != null)
+            CommandSearchPlaceholder.Visibility = string.IsNullOrEmpty(_commandSearchText)
+                ? Visibility.Visible : Visibility.Collapsed;
+        _commandsPageIndex = 0;
+        RefreshCommandsPagedView();
+    }
+
+    private void CommandsAllFilter_Click(object sender, RoutedEventArgs e)
+    {
+        _commandFilterCategory = null;
+        _commandsPageIndex = 0;
+        if (CommandCategoryFilterCombo != null && CommandCategoryFilterCombo.Items.Count > 0)
+            CommandCategoryFilterCombo.SelectedIndex = 0;
+        RefreshCommandsPagedView();
+    }
+
+    private void CommandCategoryFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (CommandCategoryFilterCombo?.SelectedItem is not ComboBoxItem item) return;
+        string tag = item.Tag?.ToString() ?? "";
+        _commandFilterCategory = string.IsNullOrEmpty(tag) ? null : tag;
+        _commandsPageIndex = 0;
+        RefreshCommandsPagedView();
+    }
+
+    private void CommandsPagePrev_Click(object sender, RoutedEventArgs e)
+    {
+        if (_commandsPageIndex > 0)
+        {
+            _commandsPageIndex--;
+            RefreshCommandsPagedView();
+        }
+    }
+
+    private void CommandsPageNext_Click(object sender, RoutedEventArgs e)
+    {
+        int pages = Math.Max(1, (int)Math.Ceiling(_commandsFlatFiltered.Count / (double)CommandsPageSize));
+        if (_commandsPageIndex < pages - 1)
+        {
+            _commandsPageIndex++;
+            RefreshCommandsPagedView();
+        }
+    }
+
+    private void AddCommandOpen_Click(object sender, RoutedEventArgs e)
+    {
+        _editingCommandRow = null;
+        PopulateCategoryCombo();
+        EnsureCategoryComboSelected();
+        if (CommandEditBox != null) CommandEditBox.Text = "";
+        if (CommandResponseEditBox != null) CommandResponseEditBox.Text = "";
+        if (CategoryNameEditBox != null) CategoryNameEditBox.Text = "";
+        if (NewCategoryTextBox != null) NewCategoryTextBox.Text = "";
+        HideCategorySubRows();
+        ClearModalFieldErrors();
+        if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Collapsed;
+        UpdateCommandModalPlaceholders();
+        UpdateCommandModalSaveEnabled();
+        if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Visible;
+    }
+
+    private void AddCommandClose_Click(object sender, RoutedEventArgs e)
+    {
+        _editingCommandRow = null;
+        HideCategorySubRows();
+        ClearModalFieldErrors();
+        if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Collapsed;
+        if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Collapsed;
+        RefreshCommandsPagedView();
+    }
+
+    private void CommandModalDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (_editingCommandRow == null) return;
+        if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Collapsed;
+        CommandRowDelete_Click(new Button { Tag = _editingCommandRow }, e);
+        // If user cancelled overlay, re-open modal for further editing
+        if (_pendingDeleteRow == null && DeleteCommandOverlay?.Visibility != Visibility.Visible &&
+            _editingCommandRow != null && AddCommandModal != null)
+        {
+            // confirmed delete clears pending; if still editing and overlay closed without confirm handled by confirm handler
+        }
+    }
+
+    private void CompanionAiTriggerBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (CompanionAiTriggerBox != null)
+            _aiSettings.CompanionAiTrigger = CompanionAiTriggerBox.Text.Trim();
+        SaveAiSettings();
+    }
+
     private void AddCommand_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrEmpty(_currentCommandCategory)) return;
-        if (!_commandCategories.ContainsKey(_currentCommandCategory))
-            _commandCategories[_currentCommandCategory] = new Dictionary<string, List<CommandEntry>>();
-        if (!_commandCategories[_currentCommandCategory].ContainsKey(_commandLanguage))
-            _commandCategories[_currentCommandCategory][_commandLanguage] = new List<CommandEntry>();
+        // Prefer category from modal combo; fall back to current filter/General
+        if (CommandCategoryCombo?.SelectedItem is ComboBoxItem catItem &&
+            !string.IsNullOrWhiteSpace(catItem.Content?.ToString()))
+        {
+            _currentCommandCategory = catItem.Content!.ToString()!.Trim();
+        }
+        if (string.IsNullOrEmpty(_currentCommandCategory))
+            _currentCommandCategory = "General";
 
-        var underlying = _commandCategories[_currentCommandCategory][_commandLanguage];
-        string cmd = NormalizeCommand(CommandEditBox.Text.Trim());
-        string resp = CommandResponseEditBox.Text.Trim();
-        if (string.IsNullOrEmpty(cmd)) cmd = "!newcmd";
-        if (string.IsNullOrEmpty(resp)) resp = "Response here";
+        string rawTrigger = CommandEditBox?.Text?.Trim() ?? "";
+        string resp = CommandResponseEditBox?.Text?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(rawTrigger))
+        {
+            AppendLog("Enter a trigger (e.g. !hi).", LogCategory.Warning);
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(resp))
+        {
+            AppendLog("Enter a response.", LogCategory.Warning);
+            return;
+        }
 
+        string cmd = NormalizeCommand(rawTrigger);
+        if (string.IsNullOrEmpty(cmd))
+        {
+            AppendLog("Invalid trigger.", LogCategory.Warning);
+            return;
+        }
+
+        var underlying = EnsureCommandLangList(_currentCommandCategory);
         var entry = new CommandEntry { Command = cmd, Response = resp };
         underlying.Add(entry);
         _currentCommandsView.Add(entry);
-        CommandEditBox.Text = cmd;
-        CommandResponseEditBox.Text = resp;
+        if (CommandEditBox != null) CommandEditBox.Text = cmd;
+        if (CommandResponseEditBox != null) CommandResponseEditBox.Text = resp;
+        PopulateCategoryCombo();
+        PopulateCategoryFilterCombo();
+        RefreshCommandsList();
+        SaveCommands();
+        AppendLog($"Command added: {cmd} in {_currentCommandCategory}", LogCategory.Info);
     }
 
     private void RemoveCommand_Click(object sender, RoutedEventArgs e)
     {
-        if (CommandsList.SelectedItem is CommandEntry sel)
+        CommandEntry? sel = CommandsList?.SelectedItem as CommandEntry
+                            ?? _editingCommandRow?.Entry;
+        if (sel == null) return;
+        if (_editingCommandRow != null)
+            _currentCommandCategory = _editingCommandRow.CategoryKey;
+
+        if (_commandCategories.TryGetValue(_currentCommandCategory, out var langDict) &&
+            langDict.TryGetValue(_commandLanguage, out var underlying))
         {
-            if (_commandCategories.TryGetValue(_currentCommandCategory, out var langDict) &&
-                langDict.TryGetValue(_commandLanguage, out var underlying))
-            {
-                underlying.Remove(sel);
-                _currentCommandsView.Remove(sel);
-            }
+            underlying.Remove(sel);
+            _currentCommandsView.Remove(sel);
+            RefreshCommandsPagedView();
+            SaveCommands();
         }
     }
 
     private void UpdateCommand_Click(object sender, RoutedEventArgs e)
     {
-        if (CommandsList.SelectedItem is CommandEntry sel)
+        CommandEntry? sel = CommandsList?.SelectedItem as CommandEntry
+                            ?? _editingCommandRow?.Entry;
+        if (sel == null) return;
+        if (_editingCommandRow != null)
+            _currentCommandCategory = _editingCommandRow.CategoryKey;
+
+        if (_commandCategories.TryGetValue(_currentCommandCategory, out var langDict) &&
+            langDict.TryGetValue(_commandLanguage, out var underlying))
         {
-            if (_commandCategories.TryGetValue(_currentCommandCategory, out var langDict) &&
-                langDict.TryGetValue(_commandLanguage, out var underlying))
+            string newCmd = NormalizeCommand(CommandEditBox?.Text?.Trim() ?? "");
+            string newResp = CommandResponseEditBox?.Text?.Trim() ?? "";
+            if (!string.IsNullOrEmpty(newCmd) && !string.IsNullOrEmpty(newResp))
             {
-                string newCmd = NormalizeCommand(CommandEditBox.Text.Trim());
-                string newResp = CommandResponseEditBox.Text.Trim();
-                if (!string.IsNullOrEmpty(newCmd) && !string.IsNullOrEmpty(newResp))
+                int idx = underlying.IndexOf(sel);
+                if (idx < 0)
                 {
-                    int idx = underlying.IndexOf(sel);
-                    if (idx >= 0)
-                    {
-                        underlying[idx] = new CommandEntry { Command = newCmd, Response = newResp };
-                        RefreshCommandsList();
-                    }
+                    // match by reference/content
+                    idx = underlying.FindIndex(c =>
+                        string.Equals(c.Command, sel.Command, StringComparison.OrdinalIgnoreCase) &&
+                        c.Response == sel.Response);
+                }
+                if (idx >= 0)
+                {
+                    underlying[idx] = new CommandEntry { Command = newCmd, Response = newResp };
+                    RefreshCommandsList();
+                    SaveCommands();
                 }
             }
         }
     }
 
-    private void SaveCommands_Click(object sender, RoutedEventArgs e) => SaveCommands();
-
-    private void AddCategory_Click(object sender, RoutedEventArgs e)
+    private void SaveCommands_Click(object sender, RoutedEventArgs e)
     {
-        string newCat = NewCategoryTextBox.Text.Trim();
-        if (string.IsNullOrEmpty(newCat)) return;
-        if (!_commandCategories.ContainsKey(newCat))
-        {
-            _commandCategories[newCat] = new Dictionary<string, List<CommandEntry>>
-            {
-                { _commandLanguage, new List<CommandEntry> { new CommandEntry { Command = "!newcmd", Response = "Response here" } } }
-            };
-            PopulateCategoryCombo();
-            foreach (ComboBoxItem cbi in CommandCategoryCombo.Items)
-            {
-                if (cbi.Content?.ToString() == newCat)
-                {
-                    CommandCategoryCombo.SelectedItem = cbi;
-                    break;
-                }
-            }
-            if (CategoryNameEditBox != null) CategoryNameEditBox.Text = newCat;
-            NewCategoryTextBox.Text = "";
-        }
-    }
+        ClearModalFieldErrors();
 
-    private void RenameCategory_Click(object sender, RoutedEventArgs e)
-    {
-        if (CategoryNameEditBox == null) return;
-        string newName = CategoryNameEditBox.Text.Trim();
-        if (string.IsNullOrEmpty(newName) || newName == _currentCommandCategory) return;
-        if (_commandCategories.ContainsKey(newName))
+        // Add Category + command: require trigger, response, and new category name
+        if (AddCategoryRow?.Visibility == Visibility.Visible)
         {
-            AppendLog("Category name already exists: " + newName);
+            if (!TryCommitAddCategoryWithCommand())
+                return;
+            CloseCommandModalAfterSave();
             return;
         }
-        if (_commandCategories.ContainsKey(_currentCommandCategory))
+
+        // Rename category only (no auto command)
+        if (UpdateCategoryRow?.Visibility == Visibility.Visible)
         {
-            var data = _commandCategories[_currentCommandCategory];
-            _commandCategories.Remove(_currentCommandCategory);
-            _commandCategories[newName] = data;
-            if (_activeCommandCategory == _currentCommandCategory) _activeCommandCategory = newName;
-            _currentCommandCategory = newName;
-            PopulateCategoryCombo();
-            foreach (ComboBoxItem cbi in CommandCategoryCombo.Items)
-            {
-                if (cbi.Content?.ToString() == newName)
-                {
-                    CommandCategoryCombo.SelectedItem = cbi;
-                    break;
-                }
-            }
-            CategoryNameEditBox.Text = newName;
-            RefreshCommandsList();
-            SaveCommands();
-            AppendLog("Category renamed to " + newName);
+            if (!TryCommitRenameCategoryOnly())
+                return;
+            // Stay open after rename so user can still edit command if needed
+            return;
         }
+
+        string rawTrigger = CommandEditBox?.Text?.Trim() ?? "";
+        string resp = CommandResponseEditBox?.Text?.Trim() ?? "";
+        bool missingTrigger = string.IsNullOrWhiteSpace(rawTrigger);
+        bool missingResp = string.IsNullOrWhiteSpace(resp);
+        SetModalFieldError(CommandEditBox, missingTrigger);
+        SetModalFieldError(CommandResponseEditBox, missingResp);
+        if (missingTrigger || missingResp)
+            return;
+
+        if (_editingCommandRow != null)
+        {
+            CommandsList.SelectedItem = _editingCommandRow.Entry;
+            _currentCommandCategory = _editingCommandRow.CategoryKey;
+            if (CommandCategoryCombo?.SelectedItem is ComboBoxItem catItem &&
+                !string.IsNullOrWhiteSpace(catItem.Content?.ToString()))
+            {
+                string newCat = catItem.Content!.ToString()!.Trim();
+                MoveCommandToCategory(_editingCommandRow, newCat);
+            }
+            UpdateCommand_Click(sender, e);
+        }
+        else
+        {
+            AddCommand_Click(sender, e);
+        }
+        CloseCommandModalAfterSave();
     }
+
+    private void CloseCommandModalAfterSave()
+    {
+        _editingCommandRow = null;
+        HideCategorySubRows();
+        if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Collapsed;
+        if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Collapsed;
+        RefreshCommandsPagedView();
+    }
+
+    /// <summary>
+    /// Add Category + Save: requires Trigger, Response, and new category name.
+    /// Creates the category, adds the command into it, saves, returns true on success.
+    /// Empty fields get a red border and nothing is saved.
+    /// </summary>
+    private bool TryCommitAddCategoryWithCommand()
+    {
+        string newCat = NewCategoryTextBox?.Text?.Trim() ?? "";
+        string rawTrigger = CommandEditBox?.Text?.Trim() ?? "";
+        string resp = CommandResponseEditBox?.Text?.Trim() ?? "";
+
+        bool missingCat = string.IsNullOrEmpty(newCat);
+        bool missingTrigger = string.IsNullOrWhiteSpace(rawTrigger);
+        bool missingResp = string.IsNullOrWhiteSpace(resp);
+
+        SetModalFieldError(NewCategoryTextBox, missingCat);
+        SetModalFieldError(CommandEditBox, missingTrigger);
+        SetModalFieldError(CommandResponseEditBox, missingResp);
+
+        if (missingCat || missingTrigger || missingResp)
+            return false;
+
+        if (_commandCategories.ContainsKey(newCat))
+        {
+            SetModalFieldError(NewCategoryTextBox, true);
+            AppendLog("Category already exists: " + newCat, LogCategory.Warning);
+            return false;
+        }
+
+        string cmd = NormalizeCommand(rawTrigger);
+        if (string.IsNullOrEmpty(cmd))
+        {
+            SetModalFieldError(CommandEditBox, true);
+            return false;
+        }
+
+        _commandCategories[newCat] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+        var entry = new CommandEntry { Command = cmd, Response = resp };
+        EnsureCommandLangList(newCat).Add(entry);
+
+        _currentCommandCategory = newCat;
+        _activeCommandCategory = newCat;
+
+        if (CommandCategoryCombo != null)
+            CommandCategoryCombo.IsEnabled = true;
+        PopulateCategoryCombo();
+        PopulateCategoryFilterCombo();
+        EnsureCategoryComboSelected();
+        if (NewCategoryTextBox != null) NewCategoryTextBox.Text = "";
+        SaveCommands();
+        RefreshCommandsList();
+        AppendLog($"Category '{newCat}' added with command {cmd}", LogCategory.Info);
+        return true;
+    }
+
+    private bool TryCommitRenameCategoryOnly()
+    {
+        string newName = CategoryNameEditBox?.Text?.Trim() ?? "";
+        if (string.IsNullOrEmpty(newName))
+        {
+            SetModalFieldError(CategoryNameEditBox, true);
+            return false;
+        }
+        if (string.Equals(newName, _currentCommandCategory, StringComparison.OrdinalIgnoreCase))
+        {
+            HideCategorySubRows();
+            return true;
+        }
+        if (_commandCategories.ContainsKey(newName))
+        {
+            SetModalFieldError(CategoryNameEditBox, true);
+            AppendLog("Category name already exists: " + newName, LogCategory.Warning);
+            return false;
+        }
+        if (!_commandCategories.ContainsKey(_currentCommandCategory))
+            return false;
+
+        var data = _commandCategories[_currentCommandCategory];
+        _commandCategories.Remove(_currentCommandCategory);
+        _commandCategories[newName] = data;
+        if (_activeCommandCategory == _currentCommandCategory) _activeCommandCategory = newName;
+        _currentCommandCategory = newName;
+        if (_editingCommandRow != null)
+        {
+            _editingCommandRow.CategoryKey = newName;
+            _editingCommandRow.Category = newName;
+        }
+        PopulateCategoryCombo();
+        PopulateCategoryFilterCombo();
+        EnsureCategoryComboSelected();
+        HideCategorySubRows();
+        RefreshCommandsList();
+        SaveCommands();
+        AppendLog("Category renamed to " + newName, LogCategory.Info);
+        return true;
+    }
+
+    private void MoveCommandToCategory(CommandRowVm row, string newCat)
+    {
+        if (string.Equals(row.CategoryKey, newCat, StringComparison.OrdinalIgnoreCase)) return;
+        if (!_commandCategories.TryGetValue(row.CategoryKey, out var oldLang) ||
+            !oldLang.TryGetValue(_commandLanguage, out var oldList))
+            return;
+
+        oldList.RemoveAll(c =>
+            string.Equals(c.Command, row.Entry.Command, StringComparison.OrdinalIgnoreCase) &&
+            c.Response == row.Entry.Response);
+        oldList.Remove(row.Entry);
+        if (oldList.Count == 0) oldLang.Remove(_commandLanguage);
+        if (oldLang.Values.All(l => l == null || l.Count == 0))
+            _commandCategories.Remove(row.CategoryKey);
+
+        EnsureCommandLangList(newCat).Add(row.Entry);
+        row.CategoryKey = newCat;
+        row.Category = newCat;
+        _currentCommandCategory = newCat;
+    }
+
+    // Legacy button handlers — category create/rename only via Save now
+    private void AddCategory_Click(object sender, RoutedEventArgs e) => TryCommitAddCategoryWithCommand();
+
+    private void RenameCategory_Click(object sender, RoutedEventArgs e) => TryCommitRenameCategoryOnly();
 
     private async Task SetupChatObserver() => await SetupChatObserverWebView();
 
@@ -2175,9 +3202,12 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // When not listening, no trigger replies (including !stats / !bbot)
+            if (!_listenToChat) return;
+
             string wTag = isWhisper ? " whisper" : "";
 
-            // AI command — only when first token is !bbot (case-insensitive)
+            // Built-in AI hook (provider path) — only while listening
             if (string.Equals(firstCmd, AiCommandToken, StringComparison.OrdinalIgnoreCase))
             {
                 TryParseBbotCommand(msg, out string aiPrompt);
@@ -2188,17 +3218,24 @@ public partial class MainWindow : Window
                 return;
             }
 
-            if (string.Equals(firstCmd, "!stats", StringComparison.OrdinalIgnoreCase))
-            {
-                LogCommandTrigger(sp, firstCmd);
-                await SendToImvuChat(BuildSessionStatsMessage(), isWhisper, whisperRowRef, sp, firstCmd, ct: ct);
-                return;
-            }
-
             foreach (var kv in GetActiveCommandReplies())
             {
                 if (!CommandMatchesFirstToken(msg, kv.Key)) continue;
-                string r = isWhisper ? kv.Value : sp + " " + kv.Value;
+
+                // Dynamic session stats for !stats (stored in General)
+                if (string.Equals(kv.Key, "!stats", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(kv.Value, "{session_stats}", StringComparison.OrdinalIgnoreCase))
+                {
+                    LogCommandTrigger(sp, firstCmd);
+                    string stats = BuildSessionStatsMessage();
+                    string statsMsg = isWhisper ? stats : FormatPublicCommandReply(sp, stats, hasNameInTemplate: false);
+                    await SendToImvuChat(statsMsg, isWhisper, whisperRowRef, sp, firstCmd, ct: ct);
+                    return;
+                }
+
+                string body = ApplyMessageTemplate(kv.Value, sp);
+                bool nameInTemplate = TemplateHasNamePlaceholder(kv.Value);
+                string r = isWhisper ? body : FormatPublicCommandReply(sp, body, nameInTemplate);
                 LogCommandTrigger(sp, firstCmd);
                 await SendToImvuChat(r, isWhisper, whisperRowRef, sp, firstCmd, ct: ct);
                 return;
@@ -2237,16 +3274,25 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Message 1
-        string template1 = PickWelcomeMessage(_welcome1, ref _lastWelcome1Pick);
-        string greet = template1.Replace("{name}", joiner);
-        await Task.Delay(JoinGreetDelayMs, ct);
-        if (!IsBotActive) return;
-        await SendWelcomeDeliveryAsync(greet, _welcome1.AsWhisper, joiner, whisperRowRef, joinUserId, ct);
-        _sessionGreetedCount++;
-        UpdateStatusBar();
+        if (!_welcome1Enabled && !_welcome2Enabled)
+        {
+            AppendActivityLog($"[JOIN] not greeting — {joiner}", LogCategory.Skipped);
+            return;
+        }
 
-        // Optional message 2 (independent delivery)
+        // Message 1 (Greet checkbox)
+        if (_welcome1Enabled)
+        {
+            string template1 = PickWelcomeMessage(_welcome1, ref _lastWelcome1Pick);
+            string greet = template1.Replace("{name}", joiner);
+            await Task.Delay(JoinGreetDelayMs, ct);
+            if (!IsBotActive) return;
+            await SendWelcomeDeliveryAsync(greet, _welcome1.AsWhisper, joiner, whisperRowRef, joinUserId, ct);
+            _sessionGreetedCount++;
+            UpdateStatusBar();
+        }
+
+        // Optional message 2 (independent)
         if (!_welcome2Enabled || !IsBotActive) return;
         string template2 = PickWelcomeMessage(_welcome2, ref _lastWelcome2Pick);
         if (string.IsNullOrWhiteSpace(template2)) return;
@@ -2254,6 +3300,11 @@ public partial class MainWindow : Window
         await Task.Delay(JoinGreetDelayMs, ct);
         if (!IsBotActive) return;
         await SendWelcomeDeliveryAsync(extra, _welcome2.AsWhisper, joiner, whisperRowRef, joinUserId, ct);
+        if (!_welcome1Enabled)
+        {
+            _sessionGreetedCount++;
+            UpdateStatusBar();
+        }
     }
 
     private async Task SendWelcomeDeliveryAsync(
@@ -3013,10 +4064,11 @@ return results.slice(-maxLines);
     protected override void OnClosed(EventArgs e)
     {
         try { SaveUiLayout(); } catch { }
-        // Only after a successful LoadMessages — never flush empty defaults over user data
+        // Only after successful load — never flush empty defaults over user data
         if (_messagesReady)
             SaveMessages();
-        SaveCommands();
+        if (_commandsReady)
+            SaveCommands();
         StopChatQueue();
         _botGlowAnimator?.Stop();
         StopUpdateTimers();

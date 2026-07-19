@@ -40,6 +40,8 @@ public partial class MainWindow
     {
         public string SelectedProvider { get; set; } = "Grok";
         public string BotDisplayName { get; set; } = "";
+        /// <summary>Built-in paid AI name/trigger (AI Settings section) — not the same as provider keys.</summary>
+        public string CompanionAiTrigger { get; set; } = "";
         public Dictionary<string, ProviderConfig> Providers { get; set; } =
             new Dictionary<string, ProviderConfig>(StringComparer.OrdinalIgnoreCase);
     }
@@ -206,10 +208,14 @@ public partial class MainWindow
             _botDisplayName = _aiSettings.BotDisplayName;
 
             // Snapshot for disk: encrypt API keys (DPAPI CurrentUser); leave in-memory plaintext
+            if (CompanionAiTriggerBox != null)
+                _aiSettings.CompanionAiTrigger = CompanionAiTriggerBox.Text.Trim();
+
             var disk = new AiSettings
             {
                 SelectedProvider = _aiSettings.SelectedProvider,
                 BotDisplayName = _aiSettings.BotDisplayName,
+                CompanionAiTrigger = _aiSettings.CompanionAiTrigger,
                 Providers = new Dictionary<string, ProviderConfig>(StringComparer.OrdinalIgnoreCase)
             };
             foreach (var kv in _aiSettings.Providers)

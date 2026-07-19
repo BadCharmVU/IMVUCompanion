@@ -1,5 +1,5 @@
 {
-  "version": "0.9.3",
-  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.3/IMVUCompanion-Setup-v0.9.3.exe",
-  "releaseNotes": "v0.9.3 — Custom welcome messages and !commands are kept after app restarts and version updates (stored in %LOCALAPPDATA%\\IMVUCompanion). Fixed welcome messages resetting to defaults on every launch. Dev builds use a single bin\\Release path; installer updates apply only to installed copies."
+  "version": "0.9.4",
+  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.4/IMVUCompanion-Setup-v0.9.4.exe",
+  "releaseNotes": "v0.9.4 — Bot Settings: add, edit, and organize !commands by category with search and paging. New commands and categories are saved and kept after restart (same as welcome messages). The same !command can have a different reply for each language. Welcome messages and bot replies stay language-aware. Improved Add Command flow (categories, validation). Note: AI Settings and AI Providers are not connected yet — still in development; only part of the UI is present for now."
 }
