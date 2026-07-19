@@ -19,6 +19,9 @@ release-v071/
 release-v092/
 installer/Output/
 
+# One-off reverse-engineering dumps (not part of the app)
+tools/imvu-js/
+
 # Local build / ship logs
 publish-log.txt
 build-log.txt

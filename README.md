@@ -124,7 +124,7 @@ Update channel: public `version.json` gist referenced by the app (see `AppVersio
 | `MainWindow.WebView.Bridge.cs` | JS execution helpers, CDP click |
 | `MainWindow.WebView.Whisper.cs` | Whisper / public send automation |
 | `MainWindow.WebView.Join.cs` | Chat observer setup, join seeding, diagnostics |
-| `Scripts/Imvu/*.js` | IMVU page scripts (edit these when IMVU DOM changes) |
+| `scripts/Imvu/*.js` | IMVU page scripts (edit these when IMVU DOM changes) |
 | `ImvuScripts.cs` | Loads embedded / on-disk JS modules |
 | `SecretProtector.cs` | DPAPI protection for API keys at rest |
 | `MainWindow.Update.cs` | Update check and apply |

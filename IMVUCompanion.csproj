@@ -26,9 +26,9 @@
     <Resource Include="icon.ico" />
     <Content Include="icon.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="icon.ico" CopyToOutputDirectory="PreserveNewest" />
-    <!-- IMVU page scripts: edit Scripts/Imvu/*.js when IMVU DOM changes -->
-    <EmbeddedResource Include="Scripts\Imvu\*.js" />
-    <Content Include="Scripts\Imvu\*.js" CopyToOutputDirectory="PreserveNewest" Link="Scripts\Imvu\%(Filename)%(Extension)" />
+    <!-- IMVU page scripts: edit scripts/Imvu/*.js when IMVU DOM changes -->
+    <EmbeddedResource Include="scripts\Imvu\*.js" />
+    <Content Include="scripts\Imvu\*.js" CopyToOutputDirectory="PreserveNewest" Link="Scripts\Imvu\%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>

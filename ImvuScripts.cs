@@ -7,7 +7,7 @@ using System.Text;
 namespace IMVUCompanion;
 
 /// <summary>
-/// IMVU page-side scripts loaded from embedded Scripts/Imvu/*.js resources.
+/// IMVU page-side scripts loaded from embedded scripts/Imvu/*.js resources.
 /// Edit those .js files when IMVU's DOM/CSS changes — not giant C# string literals.
 /// </summary>
 internal static class ImvuScripts

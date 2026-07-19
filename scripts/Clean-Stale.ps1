@@ -74,7 +74,31 @@ if (Test-Path (Join-Path $root "release")) {
             ($_.Length -lt 20MB -or $_.Name -match '\.old|\.locked|\.stale')
         } |
         ForEach-Object { Remove-IfExists $_.FullName }
+
+    # Keep only the current csproj version installer (drop older Setup exes)
+    $curVer = $null
+    try {
+        $csprojText = Get-Content (Join-Path $root "IMVUCompanion.csproj") -Raw
+        $m = [regex]::Match($csprojText, '<Version>([^<]+)</Version>')
+        if ($m.Success) { $curVer = $m.Groups[1].Value }
+    } catch { }
+    if ($curVer) {
+        $keepName = "IMVUCompanion-Setup-v$curVer.exe"
+        Get-ChildItem (Join-Path $root "release") -File -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -like "IMVUCompanion-Setup-*.exe" -and
+                $_.Name -ne $keepName
+            } |
+            ForEach-Object { Remove-IfExists $_.FullName }
+    }
 }
+
+# MakeIcon tool build output (source only under tools\MakeIcon)
+Remove-IfExists (Join-Path $root "tools\MakeIcon\bin")
+Remove-IfExists (Join-Path $root "tools\MakeIcon\obj")
+
+# One-off reverse-engineering dumps (if recreated locally)
+Remove-IfExists (Join-Path $root "tools\imvu-js")
 
 # Stale messages/commands next to the OLD relative-path locations (config is AppData now)
 $devDir = Join-Path $root "bin\Release\net8.0-windows10.0.19041.0"
