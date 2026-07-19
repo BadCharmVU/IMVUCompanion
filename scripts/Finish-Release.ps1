@@ -27,7 +27,7 @@ $manifest = Join-Path $root "version.json"
 if (Test-Path $manifest) {
     $json = Get-Content $manifest -Raw | ConvertFrom-Json
     if ($json.version -and "$($json.version)" -ne $Version) {
-        Write-Warning "version.json has $($json.version) but csproj has $Version - align before shipping."
+        Write-Warning "version.json has $($json.version) but csproj has $Version - will rewrite from installer."
     }
     if ([string]::IsNullOrWhiteSpace($ReleaseNotes) -and $json.releaseNotes) {
         $ReleaseNotes = "$($json.releaseNotes)".Trim()
@@ -44,6 +44,9 @@ try {
 
     Write-Host "==> Installer: $installer"
 
+    # Hard requirement: compute sha256 and write version.json BEFORE gist publish.
+    # Order: GitHub Release asset first (downloadUrl must resolve), then manifest + gist
+    # so clients never get a sha256 pointing at a missing asset.
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     & $gh release view $tag --repo BadCharmVU/IMVUCompanion 2>$null | Out-Null
@@ -59,7 +62,10 @@ try {
     }
     if ($LASTEXITCODE -ne 0) { throw "GitHub release failed." }
 
-    Write-Host "==> Updating gist"
+    Write-Host "==> Writing version.json with sha256 (required for auto-update)"
+    Write-VersionManifest -ProjectRoot $root -Version $Version -InstallerPath $installer -ReleaseNotes $ReleaseNotes
+
+    Write-Host "==> Updating gist (after release asset is published)"
     & (Join-Path $PSScriptRoot "Update-VersionGist.ps1")
     if ($LASTEXITCODE -ne 0) { throw "Gist update failed." }
 

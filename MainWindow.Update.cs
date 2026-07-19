@@ -89,10 +89,16 @@ public partial class MainWindow
                     break;
                 case UpdateUiState.Available:
                     string remote = AppVersion.FormatLabel(_lastUpdateCheck?.RemoteVersion);
-                    UpdateBtn.Content = $"{AppVersion.ShortLabel} → {remote} Update";
+                    bool ready = _lastUpdateCheck?.CanDownload == true;
+                    UpdateBtn.Content = ready
+                        ? $"{AppVersion.ShortLabel} → {remote} Update"
+                        : $"{AppVersion.ShortLabel} → {remote} (pending)";
                     UpdateBtn.IsEnabled = true;
-                    UpdateBtn.ToolTip = _lastUpdateCheck?.ReleaseNotes;
-                    UpdateGlow.SetActive(true);
+                    UpdateBtn.ToolTip = ready
+                        ? _lastUpdateCheck?.ReleaseNotes
+                        : "A newer release was published, but install waits until the update channel " +
+                          "lists a matching https URL and sha256. Click to re-check.";
+                    UpdateGlow.SetActive(ready);
                     break;
                 case UpdateUiState.Updating:
                     UpdateBtn.Content = "Updating…";
@@ -122,9 +128,18 @@ public partial class MainWindow
             return;
         }
 
-        if (_lastUpdateCheck?.UpdateAvailable == true && !string.IsNullOrEmpty(_lastUpdateCheck.DownloadUrl))
+        if (_lastUpdateCheck?.UpdateAvailable == true && _lastUpdateCheck.CanDownload)
         {
             await ApplyUpdateAsync();
+            return;
+        }
+
+        if (_lastUpdateCheck?.UpdateAvailable == true && !_lastUpdateCheck.CanDownload)
+        {
+            AppendLog(
+                "A newer release was seen, but install is blocked until the update channel publishes a matching https URL and sha256.",
+                LogCategory.Warning);
+            await CheckForUpdatesAsync(manual: true);
             return;
         }
 
@@ -164,6 +179,12 @@ public partial class MainWindow
                     LogCategory.Info);
                 if (!string.IsNullOrWhiteSpace(result.ReleaseNotes))
                     AppendLog("Release: " + result.ReleaseNotes.Trim(), LogCategory.Info);
+                if (!result.CanDownload)
+                {
+                    AppendLog(
+                        "Update channel not ready to install yet (verified manifest with sha256 required). Waiting for update channel.",
+                        LogCategory.Warning);
+                }
                 SetUpdateButtonState(UpdateUiState.Available);
             }
             else
@@ -182,9 +203,14 @@ public partial class MainWindow
 
     private async Task ApplyUpdateAsync()
     {
-        if (_lastUpdateCheck == null || string.IsNullOrEmpty(_lastUpdateCheck.DownloadUrl))
+        if (_lastUpdateCheck == null ||
+            !_lastUpdateCheck.CanDownload ||
+            string.IsNullOrEmpty(_lastUpdateCheck.DownloadUrl) ||
+            string.IsNullOrEmpty(_lastUpdateCheck.Sha256))
         {
-            AppendLog("No download URL for update.", LogCategory.Warning);
+            AppendLog(
+                "Cannot install update: verified channel requires https downloadUrl and sha256 from the update manifest.",
+                LogCategory.Warning);
             return;
         }
 
@@ -205,15 +231,20 @@ public partial class MainWindow
             var ct = _updateCts.Token;
 
             var progress = new Progress<string>(msg => AppendLog(msg, LogCategory.Info));
-            string? newExe = await UpdateService.DownloadUpdateAsync(_lastUpdateCheck.DownloadUrl, progress, ct);
-            if (string.IsNullOrEmpty(newExe))
+            var dl = await UpdateService.DownloadUpdateAsync(
+                _lastUpdateCheck.DownloadUrl,
+                _lastUpdateCheck.Sha256,
+                progress,
+                ct);
+
+            if (string.IsNullOrEmpty(dl.Path))
             {
-                AppendLog("Update download failed.", LogCategory.Error);
+                AppendLog(dl.Error ?? "Update download failed.", LogCategory.Error);
                 SetUpdateButtonState(UpdateUiState.Available);
                 return;
             }
 
-            if (!UpdateService.TryScheduleApplyAndRestart(newExe, out string? err))
+            if (!UpdateService.TryScheduleApplyAndRestart(dl.Path, out string? err))
             {
                 AppendLog("Update apply: " + (err ?? "unknown error"), LogCategory.Warning);
                 SetUpdateButtonState(UpdateUiState.Available);
