@@ -1,6 +1,6 @@
 {
-  "version": "0.9.4",
-  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.4/IMVUCompanion-Setup-v0.9.4.exe",
-  "sha256": "d599ba44fd3e8dad8cb0937843e9d8fb5ad670b7d074781f9747797b51996391",
-  "releaseNotes": "v0.9.4 — Bot Settings: add, edit, and organize !commands by category with search and paging. New commands and categories are saved and kept after restart (same as welcome messages). The same !command can have a different reply for each language. Welcome messages and bot replies stay language-aware. Improved Add Command flow (categories, validation). Note: AI Settings and AI Providers are not connected yet — still in development; only part of the UI is present for now."
+  "version": "0.9.5",
+  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.5/IMVUCompanion-Setup-v0.9.5.exe",
+  "sha256": "PENDING",
+  "releaseNotes": "v0.9.5 — Safer auto-update: installer downloads are checked with SHA-256 from the update channel before install, and only https URLs are used. Update apply scripts use unique temp names and a timeout. Bot Settings list and dialogs refined. AI Settings and AI Providers are not connected yet (still in development; UI only)."
 }

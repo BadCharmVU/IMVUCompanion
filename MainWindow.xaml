@@ -264,6 +264,12 @@
             <Setter Property="Padding" Value="8,4"/>
             <Setter Property="FontSize" Value="10"/>
         </Style>
+        <!-- Compact Exit (same size as Update / nav) with red face -->
+        <Style x:Key="Win11ExitButtonSmall" TargetType="Button" BasedOn="{StaticResource Win11ButtonSmall}">
+            <Setter Property="Background" Value="#F87171"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#F87171"/>
+        </Style>
         <Style TargetType="Button" BasedOn="{StaticResource Win11Button}"/>
 
         <!--
@@ -671,9 +677,8 @@
                                     Click="UpdateBtn_Click" Margin="0,0,6,0" VerticalAlignment="Center"
                                     MinWidth="0"/>
                             <Button x:Name="ExitBtn" Content="Exit"
-                                    Background="#F87171" Foreground="White" BorderBrush="#F87171"
-                                    Click="ExitButton_Click" VerticalAlignment="Center"
-                                    Height="28" Padding="12,4" FontSize="11" Cursor="Hand"/>
+                                    Style="{StaticResource Win11ExitButtonSmall}"
+                                    Click="ExitButton_Click" VerticalAlignment="Center"/>
                         </StackPanel>
                         <TextBlock Text="IMVU Companion" Foreground="#E8E8FF" FontSize="14" FontWeight="SemiBold"
                                    VerticalAlignment="Center"/>
@@ -1035,7 +1040,7 @@
                                                                 Style="{StaticResource Win11Button}"
                                                                 Click="DeleteCommandCancel_Click"/>
                                                         <Button Content="Delete" Width="100" Height="36"
-                                                                Background="#B91C1C" Foreground="White" BorderBrush="#DC2626"
+                                                                Style="{StaticResource Win11Button}"
                                                                 Click="DeleteCommandConfirm_Click"/>
                                                     </StackPanel>
                                                 </StackPanel>
@@ -1163,11 +1168,11 @@
                                                     Style="{StaticResource Win11Button}"/>
                                             <Button x:Name="CommandModalDeleteBtn" Content="Delete" Click="CommandModalDelete_Click"
                                                     Margin="0,0,8,0" Height="32" Width="100"
-                                                    Background="#B91C1C" Foreground="White" BorderBrush="#DC2626"
+                                                    Style="{StaticResource Win11Button}"
                                                     Visibility="Collapsed"/>
                                             <Button Content="Exit" Click="AddCommandClose_Click"
                                                     Height="32" Width="100"
-                                                    Background="#F87171" Foreground="White" BorderBrush="#F87171"/>
+                                                    Style="{StaticResource Win11Button}"/>
                                         </StackPanel>
                                     </StackPanel>
                                 </Border>
