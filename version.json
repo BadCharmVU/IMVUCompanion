@@ -1,6 +1,6 @@
 {
-  "version": "0.9.6",
-  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.6/IMVUCompanion-Setup-v0.9.6.exe",
-  "sha256": "PENDING",
-  "releaseNotes": "v0.9.6 - Bot Settings: category cooldown and one-shot replies, multi-response random without repeat in a cycle, optional no-name prefix, category color chips, Import/Export. Same !trigger cannot exist in two categories (same language). Safer updates: glow fix, no double app after update. Section open/closed state remembered. AI Settings and AI Providers still not connected."
+    "version":  "0.9.6",
+    "downloadUrl":  "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.6/IMVUCompanion-Setup-v0.9.6.exe",
+    "sha256":  "98a9db1843fc78cfb370db42c101e74729d058c6bc4f5cae7fd946833f7530ee",
+    "releaseNotes":  "v0.9.6 - Bot Settings: category cooldown and one-shot replies, multi-response random without repeat in a cycle, optional no-name prefix, category color chips, Import/Export. Same !trigger cannot exist in two categories (same language). Safer updates: glow fix, no double app after update. Section open/closed state remembered. AI Settings and AI Providers still not connected."
 }
