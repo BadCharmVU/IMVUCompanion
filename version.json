@@ -1,6 +1,6 @@
 {
-  "version": "0.9.7",
-  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.7/IMVUCompanion-Setup-v0.9.7.exe",
-  "sha256": "PENDING",
-  "releaseNotes": "v0.9.7 - Bot Settings polish: after adding a category or trigger the list focuses that category (and the correct page). Empty categories keep/delete options, clearer delete prompts, trigger words without typing !. AI Settings and AI Providers still not connected."
+    "version":  "0.9.7",
+    "downloadUrl":  "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.7/IMVUCompanion-Setup-v0.9.7.exe",
+    "sha256":  "6c3789ded315dfa37a6b55713f4e3b1f119f7a2e46f6d0dde90432f2a04d4b6f",
+    "releaseNotes":  "v0.9.7 - Bot Settings polish: after adding a category or trigger the list focuses that category (and the correct page). Empty categories keep/delete options, clearer delete prompts, trigger words without typing !. AI Settings and AI Providers still not connected."
 }
