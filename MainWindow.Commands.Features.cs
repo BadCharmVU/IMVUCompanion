@@ -135,7 +135,11 @@ public partial class MainWindow
     /// Same normalized trigger must not exist in another category for the same language.
     /// Multiple responses for the same trigger in the same category are allowed.
     /// </summary>
-    private bool TryFindCrossCategoryTriggerConflict(string trigger, string targetCategory, string lang, out string existingCategory)
+    /// <param name="excludeCategory">
+    /// Category to ignore (e.g. source category when moving a trigger so it is not a false conflict).
+    /// </param>
+    private bool TryFindCrossCategoryTriggerConflict(
+        string trigger, string targetCategory, string lang, out string existingCategory, string? excludeCategory = null)
     {
         existingCategory = "";
         string cmd = NormalizeCommand(trigger);
@@ -144,6 +148,9 @@ public partial class MainWindow
         foreach (var catKv in _commandCategories)
         {
             if (string.Equals(catKv.Key, targetCategory, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!string.IsNullOrEmpty(excludeCategory) &&
+                string.Equals(catKv.Key, excludeCategory, StringComparison.OrdinalIgnoreCase))
                 continue;
             foreach (var entry in GetCommandLangListOrEmpty(catKv.Value, lang))
             {
@@ -312,8 +319,12 @@ public partial class MainWindow
         if (_categorySettingsUiSyncing || !_commandsReady) return;
         if (CategoryCooldownBox != null && CategoryAllowRepeatCheck != null)
             CategoryCooldownBox.IsEnabled = CategoryAllowRepeatCheck.IsChecked == true;
-        // New category not saved yet — keep UI only until Save
-        if (_isAddingNewCategory) return;
+        // Category editor modal: apply on primary button only (not live mid-edit for add mode)
+        if (_categoryEditorIsAdd || CategoryEditorModal?.Visibility == Visibility.Visible)
+        {
+            // Still toggle cooldown enable while editing in the modal
+            return;
+        }
         LoadCategorySettingsFromUi();
         SaveCommands();
         RefreshCommandsPagedView();
@@ -324,16 +335,31 @@ public partial class MainWindow
         if (!_commandsReady) return;
         e.Handled = true;
 
-        if (_isAddingNewCategory)
+        if (_categoryEditorIsAdd || CategoryEditorModal?.Visibility == Visibility.Visible)
         {
+            string current = _pendingNewCategoryColor;
+            if (!_categoryEditorIsAdd && !string.IsNullOrEmpty(_categoryEditorOriginalName))
+            {
+                var existing = GetOrCreateCategorySettings(_categoryEditorOriginalName);
+                current = existing.ColorHex;
+            }
             int idx = Array.FindIndex(CategoryColorPalette,
-                c => string.Equals(c, _pendingNewCategoryColor, StringComparison.OrdinalIgnoreCase));
-            _pendingNewCategoryColor =
-                CategoryColorPalette[(idx + 1 + CategoryColorPalette.Length) % CategoryColorPalette.Length];
+                c => string.Equals(c, current, StringComparison.OrdinalIgnoreCase));
+            string next = CategoryColorPalette[(idx + 1 + CategoryColorPalette.Length) % CategoryColorPalette.Length];
+            if (_categoryEditorIsAdd)
+                _pendingNewCategoryColor = next;
+            else if (!string.IsNullOrEmpty(_categoryEditorOriginalName))
+                GetOrCreateCategorySettings(_categoryEditorOriginalName).ColorHex = next;
             if (CategoryColorSwatch != null)
             {
-                CategoryColorSwatch.Background = BrushFromHex(_pendingNewCategoryColor);
-                CategoryColorSwatch.ToolTip = _pendingNewCategoryColor;
+                CategoryColorSwatch.Background = BrushFromHex(next);
+                CategoryColorSwatch.ToolTip = next;
+            }
+            // Persist color only when editing an existing category (not while creating)
+            if (!_categoryEditorIsAdd)
+            {
+                SaveCommands();
+                RefreshCommandsPagedView();
             }
             return;
         }

@@ -1309,7 +1309,7 @@
                                                            VerticalAlignment="Center" Margin="6,0,0,0"/>
                                             </Grid>
                                         </Grid>
-                                        <!-- Line 2: Category + Update (edit only) + Add Category -->
+                                        <!-- Line 2: Category + Edit Category (edit only) + Add Category -->
                                         <Grid Margin="0,0,0,8">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
@@ -1323,95 +1323,24 @@
                                                       FontSize="14"
                                                       SelectionChanged="CommandCategoryCombo_SelectionChanged"/>
                                             <Button x:Name="CommandUpdateCategoryBtn" Grid.Column="2"
-                                                    Content="Update Category" Height="32" MinWidth="110"
-                                                    FontSize="11" Padding="8,0" Click="ShowUpdateCategoryRow_Click"
+                                                    Content="Edit Category" Height="32" MinWidth="110"
+                                                    FontSize="11" Padding="8,0" Click="ShowEditCategoryModal_Click"
                                                     Visibility="Collapsed"/>
                                             <Button Grid.Column="4" Content="Add Category" Height="32" Width="110"
-                                                    FontSize="11" Padding="4,0" Click="ShowAddCategoryRow_Click"/>
+                                                    FontSize="11" Padding="4,0" Click="ShowAddCategoryModal_Click"/>
                                         </Grid>
-                                        <!-- Line 3: category name + settings (add or update) -->
-                                        <StackPanel x:Name="UpdateCategoryRow" Visibility="Collapsed" Margin="0,0,0,8">
-                                            <Grid HorizontalAlignment="Stretch" Margin="0,0,0,8">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="8"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <Grid Grid.Column="0">
-                                                    <TextBox x:Name="CategoryNameEditBox" Height="32"
-                                                             Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
-                                                             FontSize="14" VerticalContentAlignment="Center"
-                                                             Padding="3,0,0,0" MaxLength="30"
-                                                             TextChanged="CategoryNameEditBox_TextChanged"/>
-                                                    <TextBlock x:Name="CategoryNamePlaceholder" Text="Category name"
-                                                               Foreground="#606080" FontSize="14" IsHitTestVisible="False"
-                                                               VerticalAlignment="Center" HorizontalAlignment="Left"
-                                                               Margin="6,0,0,0"/>
-                                                </Grid>
-                                                <Button x:Name="CategoryColorSwatch" Grid.Column="2"
-                                                        Width="32" Height="32" Padding="0" Cursor="Hand"
-                                                        ToolTip="Click to cycle category color"
-                                                        Click="CategoryColorSwatch_Click"
-                                                        Background="#7DD3FC" BorderBrush="#3A3A58" BorderThickness="1">
-                                                    <Button.Template>
-                                                        <ControlTemplate TargetType="Button">
-                                                            <Border Background="{TemplateBinding Background}"
-                                                                    BorderBrush="{TemplateBinding BorderBrush}"
-                                                                    BorderThickness="{TemplateBinding BorderThickness}"
-                                                                    CornerRadius="6"
-                                                                    SnapsToDevicePixels="True"/>
-                                                        </ControlTemplate>
-                                                    </Button.Template>
-                                                </Button>
-                                            </Grid>
-                                            <!-- Line A (never wraps): Allow Multiple Replies + Cooldown -->
-                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                                                <CheckBox x:Name="CategoryAllowRepeatCheck"
-                                                          Style="{StaticResource CompanionCheckBox}"
-                                                          Content="Allow Multiple Replies"
-                                                          VerticalAlignment="Center" Margin="0,0,12,0"
-                                                          Checked="CategorySettings_Changed" Unchecked="CategorySettings_Changed"/>
-                                                <Grid Width="110" Height="28" VerticalAlignment="Center">
-                                                    <TextBox x:Name="CategoryCooldownBox" Height="28"
-                                                             Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
-                                                             FontSize="11" VerticalContentAlignment="Center"
-                                                             Padding="6,0,4,0" IsEnabled="False"
-                                                             LostFocus="CategorySettings_Changed"
-                                                             TextChanged="CategoryCooldownBox_TextChanged"/>
-                                                    <TextBlock x:Name="CategoryCooldownPlaceholder"
-                                                               Text="Cooldown (sec)" Foreground="#606080" FontSize="11"
-                                                               IsHitTestVisible="False" VerticalAlignment="Center"
-                                                               Margin="8,0,0,0"/>
-                                                </Grid>
-                                            </StackPanel>
-                                            <!-- Line B (own row): Use Prefix {name} -->
-                                            <CheckBox x:Name="CategoryUseNamePrefixCheck"
-                                                      Style="{StaticResource CompanionCheckBox}"
-                                                      Content="Use Prefix {name}"
-                                                      VerticalAlignment="Center"
-                                                      Checked="CategorySettings_Changed" Unchecked="CategorySettings_Changed"/>
-                                        </StackPanel>
-                                        <!-- Add category — fixed 30-character width (not fluid / not text-sized) -->
-                                        <Grid x:Name="AddCategoryRow" Visibility="Collapsed" Margin="0,0,0,8"
-                                              HorizontalAlignment="Center">
-                                            <TextBox x:Name="NewCategoryTextBox" Height="32" Width="255"
-                                                     Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
-                                                     FontSize="14" VerticalContentAlignment="Center"
-                                                     Padding="3,0,0,0" MaxLength="30"
-                                                     TextChanged="NewCategoryTextBox_TextChanged"/>
-                                            <TextBlock x:Name="NewCategoryPlaceholder" Text="New category name"
-                                                       Foreground="#606080" FontSize="14" IsHitTestVisible="False"
-                                                       VerticalAlignment="Center" HorizontalAlignment="Left"
-                                                       Margin="6,0,0,0"/>
-                                        </Grid>
+                                        <!-- Legacy placeholders (hidden; fields live in CategoryEditorModal) -->
+                                        <StackPanel x:Name="UpdateCategoryRow" Visibility="Collapsed"/>
+                                        <Grid x:Name="AddCategoryRow" Visibility="Collapsed"/>
+                                        <TextBox x:Name="NewCategoryTextBox" Visibility="Collapsed"/>
+                                        <TextBlock x:Name="NewCategoryPlaceholder" Visibility="Collapsed"/>
                                         <ListBox x:Name="CommandsList" Visibility="Collapsed"
                                                  SelectionChanged="CommandsList_SelectionChanged"
                                                  DisplayMemberPath="Display"/>
                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-                                            <Button x:Name="CommandModalSaveBtn" Content="Add" Click="SaveCommands_Click"
-                                                    Margin="0,0,8,0" Height="32" Width="100"
+                                            <Button x:Name="CommandModalSaveBtn" Content="Add Trigger" Click="SaveCommands_Click"
+                                                    Margin="0,0,8,0" Height="32" MinWidth="100" Padding="10,0"
                                                     Style="{StaticResource Win11Button}"/>
-                                            <!-- Delete only via list trash icon (not in edit modal) -->
                                             <Button x:Name="CommandModalDeleteBtn" Content="Delete" Click="CommandModalDelete_Click"
                                                     Margin="0,0,8,0" Height="32" Width="100"
                                                     Style="{StaticResource Win11Button}"
@@ -1424,9 +1353,90 @@
                                 </Border>
                             </Border>
 
-                            <!-- Errors above Add Command modal so they are always visible -->
+                            <!-- Dedicated Add / Edit Category modal (above trigger modal) -->
+                            <Border x:Name="CategoryEditorModal" Visibility="Collapsed"
+                                    Background="#CC12121F" Panel.ZIndex="45">
+                                <Border Background="#252540" BorderBrush="#404060" BorderThickness="1"
+                                        CornerRadius="14" Padding="18" Margin="12"
+                                        VerticalAlignment="Center" HorizontalAlignment="Center"
+                                        MinWidth="340" MaxWidth="420">
+                                    <StackPanel>
+                                        <TextBlock x:Name="CategoryEditorTitle" Text="Add Category"
+                                                   FontSize="15" FontWeight="SemiBold" Foreground="#E8E8FF"
+                                                   HorizontalAlignment="Center" Margin="0,0,0,14"/>
+                                        <Grid Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="8"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid Grid.Column="0">
+                                                <TextBox x:Name="CategoryNameEditBox" Height="32"
+                                                         Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
+                                                         FontSize="14" VerticalContentAlignment="Center"
+                                                         Padding="3,0,0,0" MaxLength="30"
+                                                         TextChanged="CategoryNameEditBox_TextChanged"/>
+                                                <TextBlock x:Name="CategoryNamePlaceholder" Text="Category name"
+                                                           Foreground="#606080" FontSize="14" IsHitTestVisible="False"
+                                                           VerticalAlignment="Center" HorizontalAlignment="Left"
+                                                           Margin="6,0,0,0"/>
+                                            </Grid>
+                                            <Button x:Name="CategoryColorSwatch" Grid.Column="2"
+                                                    Width="32" Height="32" Padding="0" Cursor="Hand"
+                                                    ToolTip="Click to cycle category color"
+                                                    Click="CategoryColorSwatch_Click"
+                                                    Background="#7DD3FC" BorderBrush="#3A3A58" BorderThickness="1">
+                                                <Button.Template>
+                                                    <ControlTemplate TargetType="Button">
+                                                        <Border Background="{TemplateBinding Background}"
+                                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                                CornerRadius="6"
+                                                                SnapsToDevicePixels="True"/>
+                                                    </ControlTemplate>
+                                                </Button.Template>
+                                            </Button>
+                                        </Grid>
+                                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                            <CheckBox x:Name="CategoryAllowRepeatCheck"
+                                                      Style="{StaticResource CompanionCheckBox}"
+                                                      Content="Allow Multiple Replies"
+                                                      VerticalAlignment="Center" Margin="0,0,12,0"
+                                                      Checked="CategorySettings_Changed" Unchecked="CategorySettings_Changed"/>
+                                            <Grid Width="110" Height="28" VerticalAlignment="Center">
+                                                <TextBox x:Name="CategoryCooldownBox" Height="28"
+                                                         Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
+                                                         FontSize="11" VerticalContentAlignment="Center"
+                                                         Padding="6,0,4,0" IsEnabled="False"
+                                                         LostFocus="CategorySettings_Changed"
+                                                         TextChanged="CategoryCooldownBox_TextChanged"/>
+                                                <TextBlock x:Name="CategoryCooldownPlaceholder"
+                                                           Text="Cooldown (sec)" Foreground="#606080" FontSize="11"
+                                                           IsHitTestVisible="False" VerticalAlignment="Center"
+                                                           Margin="8,0,0,0"/>
+                                            </Grid>
+                                        </StackPanel>
+                                        <CheckBox x:Name="CategoryUseNamePrefixCheck"
+                                                  Style="{StaticResource CompanionCheckBox}"
+                                                  Content="Use Prefix {name}"
+                                                  VerticalAlignment="Center" Margin="0,0,0,16"
+                                                  Checked="CategorySettings_Changed" Unchecked="CategorySettings_Changed"/>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                            <Button x:Name="CategoryEditorPrimaryBtn" Content="Add Category"
+                                                    Height="32" MinWidth="120" Padding="12,0" Margin="0,0,8,0"
+                                                    Style="{StaticResource Win11Button}"
+                                                    Click="CategoryEditorPrimary_Click"/>
+                                            <Button Content="Cancel" Height="32" Width="100"
+                                                    Style="{StaticResource Win11Button}"
+                                                    Click="CategoryEditorCancel_Click"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </Border>
+
+                            <!-- Errors above category + trigger modals -->
                             <Border x:Name="BotSettingsErrorOverlay" Visibility="Collapsed"
-                                    Background="#CC12121F" Panel.ZIndex="50">
+                                    Background="#CC12121F" Panel.ZIndex="55">
                                 <Border Background="#252540" CornerRadius="12" Padding="20,18"
                                         BorderBrush="#404060" BorderThickness="1"
                                         HorizontalAlignment="Center" VerticalAlignment="Center"

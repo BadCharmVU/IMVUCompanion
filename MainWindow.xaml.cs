@@ -1563,6 +1563,7 @@ public partial class MainWindow : Window
         if (CommandModalSaveBtn != null) CommandModalSaveBtn.Content = "Save";
         UpdateCommandModalSaveEnabled();
         if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Visible;
+        if (CategoryEditorModal != null) CategoryEditorModal.Visibility = Visibility.Collapsed;
     }
 
     private int CountCommandsInCategory(string categoryKey)
@@ -1761,74 +1762,236 @@ public partial class MainWindow : Window
     private static readonly SolidColorBrush ModalFieldBorderError =
         new(System.Windows.Media.Color.FromRgb(0xEF, 0x44, 0x44));
 
-    /// <summary>True while Update Category panel is used to create a new empty category.</summary>
-    private bool _isAddingNewCategory;
+    /// <summary>True while CategoryEditorModal is creating a new category (false = edit existing).</summary>
+    private bool _categoryEditorIsAdd;
     private string _pendingNewCategoryColor = "#7DD3FC";
+    private string _categoryEditorOriginalName = "";
 
-    private void ShowUpdateCategoryRow_Click(object sender, RoutedEventArgs e)
+    private void ShowEditCategoryModal_Click(object sender, RoutedEventArgs e)
     {
-        if (AddCategoryRow != null) AddCategoryRow.Visibility = Visibility.Collapsed;
-        _isAddingNewCategory = false;
-        RestoreCategoryComboAfterAddMode();
-        if (UpdateCategoryRow != null)
-        {
-            UpdateCategoryRow.Visibility = Visibility.Visible;
-            if (CategoryNameEditBox != null)
-                CategoryNameEditBox.Text = _currentCommandCategory;
-            if (CategoryNamePlaceholder != null)
-                CategoryNamePlaceholder.Text = "Category name";
-            ApplyCategorySettingsToUi(_currentCommandCategory);
-            ClearModalFieldErrors();
-            UpdateCommandModalPlaceholders();
-            UpdateCommandModalSaveEnabled();
-        }
+        OpenCategoryEditorModal(isAdd: false);
     }
 
-    private void ShowAddCategoryRow_Click(object sender, RoutedEventArgs e)
+    private void ShowAddCategoryModal_Click(object sender, RoutedEventArgs e)
     {
-        if (AddCategoryRow != null) AddCategoryRow.Visibility = Visibility.Collapsed;
-        _isAddingNewCategory = true;
+        OpenCategoryEditorModal(isAdd: true);
+    }
+
+    // Back-compat names (if any remaining handlers reference them)
+    private void ShowUpdateCategoryRow_Click(object sender, RoutedEventArgs e) => ShowEditCategoryModal_Click(sender, e);
+    private void ShowAddCategoryRow_Click(object sender, RoutedEventArgs e) => ShowAddCategoryModal_Click(sender, e);
+
+    private void OpenCategoryEditorModal(bool isAdd)
+    {
+        _categoryEditorIsAdd = isAdd;
         _pendingNewCategoryColor = NextCategoryColor();
-        RestoreCategoryComboAfterAddMode();
-        if (UpdateCategoryRow != null)
+        ClearModalFieldErrors();
+
+        if (CategoryEditorTitle != null)
+            CategoryEditorTitle.Text = isAdd ? "Add Category" : "Edit Category";
+        if (CategoryEditorPrimaryBtn != null)
+            CategoryEditorPrimaryBtn.Content = isAdd ? "Add Category" : "Update Category";
+
+        _categorySettingsUiSyncing = true;
+        try
         {
-            UpdateCategoryRow.Visibility = Visibility.Visible;
-            if (CategoryNameEditBox != null) CategoryNameEditBox.Text = "";
-            if (CategoryNamePlaceholder != null)
-                CategoryNamePlaceholder.Text = "New category name";
-            // Defaults for a brand-new category (not saved until Save)
-            _categorySettingsUiSyncing = true;
-            try
+            if (isAdd)
             {
+                _categoryEditorOriginalName = "";
+                if (CategoryNameEditBox != null) CategoryNameEditBox.Text = "";
+                if (CategoryNamePlaceholder != null)
+                {
+                    CategoryNamePlaceholder.Text = "New category name";
+                    CategoryNamePlaceholder.Visibility = Visibility.Visible;
+                }
                 if (CategoryAllowRepeatCheck != null) CategoryAllowRepeatCheck.IsChecked = false;
                 if (CategoryCooldownBox != null)
                 {
-                    CategoryCooldownBox.Text = "30";
+                    CategoryCooldownBox.Text = "";
                     CategoryCooldownBox.IsEnabled = false;
                 }
+                if (CategoryCooldownPlaceholder != null)
+                    CategoryCooldownPlaceholder.Visibility = Visibility.Visible;
                 if (CategoryUseNamePrefixCheck != null) CategoryUseNamePrefixCheck.IsChecked = false;
-                if (CategoryCooldownBox != null) CategoryCooldownBox.Text = "";
-                if (CategoryCooldownPlaceholder != null) CategoryCooldownPlaceholder.Visibility = Visibility.Visible;
                 if (CategoryColorSwatch != null)
                 {
                     CategoryColorSwatch.Background = BrushFromHex(_pendingNewCategoryColor);
                     CategoryColorSwatch.ToolTip = _pendingNewCategoryColor;
                 }
             }
-            finally { _categorySettingsUiSyncing = false; }
-            ClearModalFieldErrors();
-            UpdateCommandModalPlaceholders();
-            UpdateCommandModalSaveEnabled();
+            else
+            {
+                string cat = _currentCommandCategory;
+                if (CommandCategoryCombo?.SelectedItem is ComboBoxItem cbi &&
+                    !string.IsNullOrWhiteSpace(cbi.Content?.ToString()))
+                    cat = cbi.Content!.ToString()!.Trim();
+                _categoryEditorOriginalName = cat;
+                _currentCommandCategory = cat;
+                if (CategoryNameEditBox != null) CategoryNameEditBox.Text = cat;
+                if (CategoryNamePlaceholder != null)
+                {
+                    CategoryNamePlaceholder.Text = "Category name";
+                    CategoryNamePlaceholder.Visibility = string.IsNullOrEmpty(cat)
+                        ? Visibility.Visible : Visibility.Collapsed;
+                }
+                ApplyCategorySettingsToUi(cat);
+            }
         }
+        finally { _categorySettingsUiSyncing = false; }
+
+        if (CategoryEditorModal != null)
+            CategoryEditorModal.Visibility = Visibility.Visible;
+    }
+
+    private void CategoryEditorCancel_Click(object sender, RoutedEventArgs e)
+    {
+        CloseCategoryEditorModal();
+    }
+
+    private void CategoryEditorPrimary_Click(object sender, RoutedEventArgs e)
+    {
+        ClearModalFieldErrors();
+        if (_categoryEditorIsAdd)
+        {
+            if (!TryCommitAddCategoryOnlyFromEditor())
+                return;
+        }
+        else
+        {
+            if (!TryCommitEditCategoryFromEditor())
+                return;
+        }
+        CloseCategoryEditorModal();
+    }
+
+    private void CloseCategoryEditorModal()
+    {
+        _categoryEditorIsAdd = false;
+        _categoryEditorOriginalName = "";
+        if (CategoryEditorModal != null)
+            CategoryEditorModal.Visibility = Visibility.Collapsed;
+        ClearModalFieldErrors();
     }
 
     private void HideCategorySubRows()
     {
-        _isAddingNewCategory = false;
+        CloseCategoryEditorModal();
         if (UpdateCategoryRow != null) UpdateCategoryRow.Visibility = Visibility.Collapsed;
         if (AddCategoryRow != null) AddCategoryRow.Visibility = Visibility.Collapsed;
         RestoreCategoryComboAfterAddMode();
         ClearModalFieldErrors();
+    }
+
+    /// <summary>Create empty category from CategoryEditorModal only (no trigger).</summary>
+    private bool TryCommitAddCategoryOnlyFromEditor()
+    {
+        string newCat = CategoryNameEditBox?.Text?.Trim() ?? "";
+        if (string.IsNullOrEmpty(newCat))
+        {
+            SetModalFieldError(CategoryNameEditBox, true);
+            ShowBotSettingsError("Missing category name", "Enter a name for the new category.");
+            return false;
+        }
+        if (_commandCategories.ContainsKey(newCat))
+        {
+            SetModalFieldError(CategoryNameEditBox, true);
+            ShowBotSettingsError("Category exists", $"A category named '{newCat}' already exists.");
+            return false;
+        }
+
+        _commandCategories[newCat] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+        var s = new CategorySettings
+        {
+            ColorHex = _pendingNewCategoryColor,
+            AllowRepeatTriggers = CategoryAllowRepeatCheck?.IsChecked == true,
+            CooldownSeconds = 30,
+            UseNamePrefix = CategoryUseNamePrefixCheck?.IsChecked == true
+        };
+        if (CategoryCooldownBox != null && int.TryParse(CategoryCooldownBox.Text?.Trim(), out int sec))
+            s.CooldownSeconds = Math.Clamp(sec, 1, 3600);
+        if (CategoryColorSwatch?.Background is SolidColorBrush scb)
+        {
+            try { s.ColorHex = $"#{scb.Color.R:X2}{scb.Color.G:X2}{scb.Color.B:X2}"; }
+            catch { /* keep pending */ }
+        }
+        _categorySettings[newCat] = s;
+
+        _currentCommandCategory = newCat;
+        _activeCommandCategory = newCat;
+        if (CommandCategoryCombo != null)
+            CommandCategoryCombo.IsEnabled = true;
+        PopulateCategoryCombo();
+        PopulateCategoryFilterCombo();
+        SetCommandCategoryComboQuiet(newCat);
+        ShowCategoryInList(newCat);
+        SaveCommands();
+        AppendLog($"Category '{newCat}' added (empty — no triggers yet)", LogCategory.Info);
+        return true;
+    }
+
+    /// <summary>Rename + settings for existing category from CategoryEditorModal.</summary>
+    private bool TryCommitEditCategoryFromEditor()
+    {
+        string oldName = _categoryEditorOriginalName;
+        if (string.IsNullOrEmpty(oldName))
+            oldName = _currentCommandCategory;
+        string newName = CategoryNameEditBox?.Text?.Trim() ?? "";
+        if (string.IsNullOrEmpty(newName))
+        {
+            SetModalFieldError(CategoryNameEditBox, true);
+            ShowBotSettingsError("Missing category name", "Enter a category name.");
+            return false;
+        }
+
+        // Apply settings to the (current) category before optional rename
+        _currentCommandCategory = oldName;
+        LoadCategorySettingsFromUi();
+        if (CategoryColorSwatch?.Background is SolidColorBrush scb)
+        {
+            try
+            {
+                GetOrCreateCategorySettings(oldName).ColorHex =
+                    $"#{scb.Color.R:X2}{scb.Color.G:X2}{scb.Color.B:X2}";
+            }
+            catch { }
+        }
+
+        if (!string.Equals(newName, oldName, StringComparison.OrdinalIgnoreCase))
+        {
+            if (_commandCategories.ContainsKey(newName))
+            {
+                SetModalFieldError(CategoryNameEditBox, true);
+                ShowBotSettingsError("Category exists", $"A category named '{newName}' already exists.");
+                return false;
+            }
+            if (!_commandCategories.ContainsKey(oldName))
+                return false;
+            var data = _commandCategories[oldName];
+            _commandCategories.Remove(oldName);
+            _commandCategories[newName] = data;
+            MigrateCategorySettingsKeys(oldName, newName);
+            if (string.Equals(_activeCommandCategory, oldName, StringComparison.OrdinalIgnoreCase))
+                _activeCommandCategory = newName;
+            if (string.Equals(_commandFilterCategory, oldName, StringComparison.OrdinalIgnoreCase))
+                _commandFilterCategory = newName;
+            if (_editingCommandRow != null &&
+                string.Equals(_editingCommandRow.CategoryKey, oldName, StringComparison.OrdinalIgnoreCase))
+            {
+                _editingCommandRow.CategoryKey = newName;
+                _editingCommandRow.Category = newName;
+            }
+            oldName = newName;
+        }
+
+        _currentCommandCategory = oldName;
+        _activeCommandCategory = oldName;
+        PopulateCategoryCombo();
+        PopulateCategoryFilterCombo();
+        SetCommandCategoryComboQuiet(oldName);
+        ShowCategoryInList(oldName);
+        SaveCommands();
+        AppendLog("Category updated: " + oldName, LogCategory.Info);
+        return true;
     }
 
     private void RestoreCategoryComboAfterAddMode()
@@ -2810,9 +2973,10 @@ public partial class MainWindow : Window
         ClearModalFieldErrors();
         if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Collapsed;
         if (CommandUpdateCategoryBtn != null) CommandUpdateCategoryBtn.Visibility = Visibility.Collapsed;
-        if (CommandModalSaveBtn != null) CommandModalSaveBtn.Content = "Add";
+        if (CommandModalSaveBtn != null) CommandModalSaveBtn.Content = "Add Trigger";
         UpdateCommandModalPlaceholders();
         UpdateCommandModalSaveEnabled();
+        if (CategoryEditorModal != null) CategoryEditorModal.Visibility = Visibility.Collapsed;
         if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Visible;
     }
 
@@ -2933,8 +3097,9 @@ public partial class MainWindow : Window
             string newResp = CommandResponseEditBox?.Text?.Trim() ?? "";
             if (!string.IsNullOrEmpty(newCmd) && !string.IsNullOrEmpty(newResp))
             {
+                string sourceCat = _editingCommandRow?.CategoryKey ?? _currentCommandCategory;
                 if (!string.Equals(NormalizeCommand(sel.Command), newCmd, StringComparison.OrdinalIgnoreCase) &&
-                    TryFindCrossCategoryTriggerConflict(newCmd, _currentCommandCategory, _commandLanguage, out string otherCat))
+                    TryFindCrossCategoryTriggerConflict(newCmd, _currentCommandCategory, _commandLanguage, out string otherCat, sourceCat))
                 {
                     ShowBotSettingsError(
                         "Trigger already used",
@@ -2962,30 +3127,7 @@ public partial class MainWindow : Window
     private void SaveCommands_Click(object sender, RoutedEventArgs e)
     {
         ClearModalFieldErrors();
-
-        // Legacy add-category row (name only) — still supported if visible
-        if (AddCategoryRow?.Visibility == Visibility.Visible)
-        {
-            if (!TryCommitAddCategoryEmptyOrWithCommand(fromLegacyRow: true))
-                return;
-            CloseCommandModalAfterSave();
-            return;
-        }
-
-        // Category panel: add new empty category OR rename existing
-        if (UpdateCategoryRow?.Visibility == Visibility.Visible)
-        {
-            if (_isAddingNewCategory)
-            {
-                if (!TryCommitAddCategoryEmptyOrWithCommand(fromLegacyRow: false))
-                    return;
-                // Stay open; list already focuses the new category. Operator can add a trigger next.
-                return;
-            }
-            if (!TryCommitRenameCategoryOnly())
-                return;
-            return;
-        }
+        // Category create/edit is only via CategoryEditorModal — this button is Add/Save Trigger only.
 
         string rawTrigger = CommandEditBox?.Text?.Trim() ?? "";
         string resp = CommandResponseEditBox?.Text?.Trim() ?? "";
@@ -3008,14 +3150,31 @@ public partial class MainWindow : Window
         if (_editingCommandRow != null)
         {
             CommandsList.SelectedItem = _editingCommandRow.Entry;
-            _currentCommandCategory = _editingCommandRow.CategoryKey;
+            string sourceCat = _editingCommandRow.CategoryKey;
+            _currentCommandCategory = sourceCat;
             if (CommandCategoryCombo?.SelectedItem is ComboBoxItem catItem &&
                 !string.IsNullOrWhiteSpace(catItem.Content?.ToString()))
             {
                 string newCat = catItem.Content!.ToString()!.Trim();
-                MoveCommandToCategory(_editingCommandRow, newCat);
+                if (!string.Equals(newCat, sourceCat, StringComparison.OrdinalIgnoreCase))
+                {
+                    string cmd = NormalizeCommand(rawTrigger);
+                    if (TryFindCrossCategoryTriggerConflict(cmd, newCat, _commandLanguage, out string otherCat, sourceCat))
+                    {
+                        ShowBotSettingsError(
+                            "Trigger already used",
+                            $"The trigger word '{TriggerWordForInput(cmd)}' already exists in category '{otherCat}'.\n\n" +
+                            "The same command word cannot live in more than one category for the same language.");
+                        return;
+                    }
+                    MoveCommandToCategory(_editingCommandRow, newCat);
+                    _currentCommandCategory = newCat;
+                }
             }
             UpdateCommand_Click(sender, e);
+            string finalCat = _editingCommandRow?.CategoryKey ?? _currentCommandCategory;
+            string finalCmd = NormalizeCommand(CommandEditBox?.Text ?? "");
+            ShowTriggerInList(finalCat, finalCmd, resp);
         }
         else
         {
@@ -3049,134 +3208,6 @@ public partial class MainWindow : Window
         return true;
     }
 
-    /// <summary>
-    /// Create a new category (may be empty). Optionally attach trigger+response if both filled.
-    /// Name required. Partial command fields → red borders + error.
-    /// </summary>
-    private bool TryCommitAddCategoryEmptyOrWithCommand(bool fromLegacyRow)
-    {
-        string newCat = fromLegacyRow
-            ? (NewCategoryTextBox?.Text?.Trim() ?? "")
-            : (CategoryNameEditBox?.Text?.Trim() ?? "");
-        string rawTrigger = CommandEditBox?.Text?.Trim() ?? "";
-        string resp = CommandResponseEditBox?.Text?.Trim() ?? "";
-
-        bool missingCat = string.IsNullOrEmpty(newCat);
-        bool hasTrigger = !string.IsNullOrWhiteSpace(rawTrigger);
-        bool hasResp = !string.IsNullOrWhiteSpace(resp);
-
-        if (fromLegacyRow)
-            SetModalFieldError(NewCategoryTextBox, missingCat);
-        else
-            SetModalFieldError(CategoryNameEditBox, missingCat);
-
-        if (missingCat)
-        {
-            ShowBotSettingsError("Missing category name", "Enter a name for the new category.");
-            return false;
-        }
-
-        // Partial command: not allowed (must be both or neither for empty category)
-        if (hasTrigger != hasResp)
-        {
-            SetModalFieldError(CommandEditBox, !hasTrigger);
-            SetModalFieldError(CommandResponseEditBox, !hasResp);
-            ShowBotSettingsError(
-                "Incomplete command",
-                hasTrigger
-                    ? "You entered a Trigger Word without a Response.\nAdd a response, or clear the trigger to create an empty category."
-                    : "You entered a Response without a Trigger Word.\nAdd a trigger word (e.g. hi), or clear the response to create an empty category.");
-            return false;
-        }
-
-        if (_commandCategories.ContainsKey(newCat))
-        {
-            if (fromLegacyRow) SetModalFieldError(NewCategoryTextBox, true);
-            else SetModalFieldError(CategoryNameEditBox, true);
-            ShowBotSettingsError("Category exists", $"A category named '{newCat}' already exists.");
-            return false;
-        }
-
-        string? cmd = null;
-        if (hasTrigger && hasResp)
-        {
-            cmd = NormalizeCommand(rawTrigger);
-            if (string.IsNullOrEmpty(cmd))
-            {
-                SetModalFieldError(CommandEditBox, true);
-                ShowBotSettingsError(
-                    "Invalid trigger",
-                    "Enter Trigger Word (e.g. hi)\n(do not include ! — it is added automatically).");
-                return false;
-            }
-            if (TryFindCrossCategoryTriggerConflict(cmd, newCat, _commandLanguage, out string otherCat))
-            {
-                ShowBotSettingsError(
-                    "Trigger already used",
-                    $"The trigger word '{TriggerWordForInput(cmd)}' already exists in category '{otherCat}'.\n\n" +
-                    "The same command word cannot live in more than one category for the same language.");
-                return false;
-            }
-        }
-
-        _commandCategories[newCat] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
-        var s = new CategorySettings
-        {
-            ColorHex = _isAddingNewCategory ? _pendingNewCategoryColor : NextCategoryColor(),
-            AllowRepeatTriggers = CategoryAllowRepeatCheck?.IsChecked == true,
-            CooldownSeconds = 30,
-            UseNamePrefix = CategoryUseNamePrefixCheck?.IsChecked == true
-        };
-        if (CategoryCooldownBox != null && int.TryParse(CategoryCooldownBox.Text?.Trim(), out int sec))
-            s.CooldownSeconds = Math.Clamp(sec, 1, 3600);
-        else
-            s.CooldownSeconds = 30;
-        if (CategoryColorSwatch?.Background is SolidColorBrush scb)
-        {
-            try
-            {
-                s.ColorHex = $"#{scb.Color.R:X2}{scb.Color.G:X2}{scb.Color.B:X2}";
-            }
-            catch { /* keep pending */ }
-        }
-        _categorySettings[newCat] = s;
-
-        string? addedResp = null;
-        if (cmd != null)
-        {
-            addedResp = resp;
-            EnsureCommandLangList(newCat).Add(new CommandEntry { Command = cmd, Response = resp });
-        }
-
-        _currentCommandCategory = newCat;
-        _activeCommandCategory = newCat;
-        _isAddingNewCategory = false;
-
-        if (CommandCategoryCombo != null)
-            CommandCategoryCombo.IsEnabled = true;
-        PopulateCategoryCombo();
-        PopulateCategoryFilterCombo();
-        // Immediately select the new category in the modal dropdown
-        SetCommandCategoryComboQuiet(newCat);
-        EnsureCategoryComboSelected();
-        ApplyCategorySettingsToUi(newCat);
-        if (CategoryNameEditBox != null) CategoryNameEditBox.Text = newCat;
-        if (CategoryNamePlaceholder != null) CategoryNamePlaceholder.Text = "Category name";
-        if (NewCategoryTextBox != null) NewCategoryTextBox.Text = "";
-        SaveCommands();
-        // List filter → new category (and page with new trigger if any)
-        if (cmd != null && addedResp != null)
-            ShowTriggerInList(newCat, cmd, addedResp);
-        else
-            ShowCategoryInList(newCat);
-        AppendLog(
-            cmd != null
-                ? $"Category '{newCat}' added with command {cmd}"
-                : $"Category '{newCat}' added (empty — no triggers yet)",
-            LogCategory.Info);
-        return true;
-    }
-
     private void CloseCommandModalAfterSave()
     {
         _editingCommandRow = null;
@@ -3187,52 +3218,9 @@ public partial class MainWindow : Window
         RefreshCommandsPagedView();
     }
 
-    private bool TryCommitAddCategoryWithCommand() =>
-        TryCommitAddCategoryEmptyOrWithCommand(fromLegacyRow: true);
+    private bool TryCommitAddCategoryWithCommand() => TryCommitAddCategoryOnlyFromEditor();
 
-    private bool TryCommitRenameCategoryOnly()
-    {
-        string newName = CategoryNameEditBox?.Text?.Trim() ?? "";
-        if (string.IsNullOrEmpty(newName))
-        {
-            SetModalFieldError(CategoryNameEditBox, true);
-            return false;
-        }
-        if (string.Equals(newName, _currentCommandCategory, StringComparison.OrdinalIgnoreCase))
-        {
-            HideCategorySubRows();
-            return true;
-        }
-        if (_commandCategories.ContainsKey(newName))
-        {
-            SetModalFieldError(CategoryNameEditBox, true);
-            AppendLog("Category name already exists: " + newName, LogCategory.Warning);
-            return false;
-        }
-        if (!_commandCategories.ContainsKey(_currentCommandCategory))
-            return false;
-
-        string oldName = _currentCommandCategory;
-        var data = _commandCategories[oldName];
-        _commandCategories.Remove(oldName);
-        _commandCategories[newName] = data;
-        MigrateCategorySettingsKeys(oldName, newName);
-        if (_activeCommandCategory == oldName) _activeCommandCategory = newName;
-        _currentCommandCategory = newName;
-        if (_editingCommandRow != null)
-        {
-            _editingCommandRow.CategoryKey = newName;
-            _editingCommandRow.Category = newName;
-        }
-        PopulateCategoryCombo();
-        PopulateCategoryFilterCombo();
-        EnsureCategoryComboSelected();
-        HideCategorySubRows();
-        RefreshCommandsList();
-        SaveCommands();
-        AppendLog("Category renamed to " + newName, LogCategory.Info);
-        return true;
-    }
+    private bool TryCommitRenameCategoryOnly() => TryCommitEditCategoryFromEditor();
 
     private void MoveCommandToCategory(CommandRowVm row, string newCat)
     {
@@ -3242,29 +3230,14 @@ public partial class MainWindow : Window
             return;
 
         string cmd = NormalizeCommand(row.Entry.Command);
-        if (TryFindCrossCategoryTriggerConflict(cmd, newCat, _commandLanguage, out string otherCat) &&
-            !string.Equals(otherCat, row.CategoryKey, StringComparison.OrdinalIgnoreCase))
+        // Ignore source category so moving is not a false "already exists" against itself
+        if (TryFindCrossCategoryTriggerConflict(cmd, newCat, _commandLanguage, out string otherCat, row.CategoryKey))
         {
-            // Target already has conflict with a third category; if conflict is only current source, OK
+            ShowBotSettingsError(
+                "Trigger already used",
+                $"Cannot move '{TriggerWordForInput(cmd)}' to '{newCat}':\nit already exists in category '{otherCat}'.");
+            return;
         }
-        // Conflict if newCat would share trigger with any category other than the source we're leaving
-        foreach (var catKv in _commandCategories)
-        {
-            if (string.Equals(catKv.Key, newCat, StringComparison.OrdinalIgnoreCase)) continue;
-            if (string.Equals(catKv.Key, row.CategoryKey, StringComparison.OrdinalIgnoreCase)) continue;
-            foreach (var e in GetCommandLangListOrEmpty(catKv.Value, _commandLanguage))
-            {
-                if (string.Equals(NormalizeCommand(e.Command), cmd, StringComparison.OrdinalIgnoreCase))
-                {
-                    ShowBotSettingsError(
-                        "Trigger already used",
-                        $"Cannot move '{TriggerWordForInput(cmd)}' to '{newCat}':\nit already exists in category '{catKv.Key}'.");
-                    return;
-                }
-            }
-        }
-        // Also: newCat itself may already have this trigger — same category multiple responses OK
-        // so no check needed within newCat.
 
         oldList.RemoveAll(c =>
             string.Equals(c.Command, row.Entry.Command, StringComparison.OrdinalIgnoreCase) &&
