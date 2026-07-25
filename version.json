@@ -1,6 +1,6 @@
 {
-  "version": "0.9.8",
-  "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.8/IMVUCompanion-Setup-v0.9.8.exe",
-  "sha256": "PENDING",
-  "releaseNotes": "v0.9.8 - Hot Fix: separate Add Category and Edit Category modals so Add Trigger no longer creates duplicate rows; fix moving a trigger to another category false conflict."
+    "releaseNotes":  "v0.9.8 - Hot Fix: separate Add Category and Edit Category modals so Add Trigger no longer creates duplicate rows; fix moving a trigger to another category false conflict.",
+    "sha256":  "a8edd4991762a60c868d3d90915b10dfd143bb4a51489c53e9d624c16f44d305",
+    "version":  "0.9.8",
+    "downloadUrl":  "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.8/IMVUCompanion-Setup-v0.9.8.exe"
 }
