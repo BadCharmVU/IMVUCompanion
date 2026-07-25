@@ -2,9 +2,9 @@
 
 Windows desktop companion for **IMVU Next** chat rooms. IMVU runs inside the app (WebView2). The bot can greet joiners, answer `!commands`, send optional welcome whispers, and check for updates automatically.
 
-**Current release:** [v0.9.5](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
+**Current release:** [v0.9.6](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
 
-Download **`IMVUCompanion-Setup-v0.9.5.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
+Download **`IMVUCompanion-Setup-v0.9.6.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
 
 ---
 
@@ -140,11 +140,12 @@ Update channel: public `version.json` gist referenced by the app (see `AppVersio
 
 ---
 
-## Recent changes (v0.9.5)
+## Recent changes (v0.9.6)
 
-- **Safer auto-update:** downloads are verified with SHA-256 from the update channel before install; only `https://` URLs are accepted
-- Update install scripts use one-time temp names and a timeout when waiting for the old process to exit
-- Bot Settings command list and dialogs polish (stable list rows; consistent modal actions)
+- **Bot Settings:** per-category cooldown / one-shot replies, multi-response pools (no repeat until cycle ends), optional “no name prefix”, category color chips
+- **Import / Export** for categories (merge or replace)
+- Same `!trigger` cannot exist in two categories for the same language
+- Fixes: update button glow, no double app after silent update, section open/closed remembered
 - **AI Settings** and **AI Providers** are **not connected yet** (still in development; UI only for now)
 
 See [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases) for full notes per version.

@@ -373,10 +373,21 @@ internal static class UpdateService
             string progFiles = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
                 "IMVU Companion", ExpectedAppExeName);
+            // Silent setup must NOT also be launched by Inno [Run] (skipifsilent there).
+            // Wait until no other IMVUCompanion.exe remains, then start exactly one instance.
             File.WriteAllText(launchScript, $"""
 @echo off
 setlocal
 "{newExePath}" /VERYSILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS /NORESTART
+set WAIT=0
+:waitsetup
+if %WAIT% GEQ 120 goto launch
+timeout /t 1 /nobreak >nul
+set /a WAIT+=1
+tasklist /FI "IMAGENAME eq IMVUCompanion.exe" 2>nul | find /I "IMVUCompanion.exe" >nul
+if %ERRORLEVEL%==0 goto waitsetup
+:launch
+timeout /t 1 /nobreak >nul
 if exist "{localApp}" (
   start "" "{localApp}"
   goto done

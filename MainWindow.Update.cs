@@ -98,7 +98,8 @@ public partial class MainWindow
                         ? _lastUpdateCheck?.ReleaseNotes
                         : "A newer release was published, but install waits until the update channel " +
                           "lists a matching https URL and sha256. Click to re-check.";
-                    UpdateGlow.SetActive(ready);
+                    // Glow whenever a newer version is known (including pending channel)
+                    UpdateGlow.SetActive(true);
                     break;
                 case UpdateUiState.Updating:
                     UpdateBtn.Content = "Updating…";

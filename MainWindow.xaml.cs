@@ -16,8 +16,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Media;
-
-
 using System.Windows.Threading;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
@@ -141,6 +139,9 @@ public partial class MainWindow : Window
         public string Category { get; set; } = "";
         public string Response { get; set; } = "";
         public string CategoryKey { get; set; } = "";
+        public string ColorHex { get; set; } = "#7DD3FC";
+        public System.Windows.Media.Brush CategoryBrush { get; set; } =
+            System.Windows.Media.Brushes.Transparent;
         public CommandEntry Entry { get; set; } = new();
     }
 
@@ -995,6 +996,7 @@ public partial class MainWindow : Window
             // Full start always resets session stats; pause-for-room does not
             ResetBotSessionStats();
             ClearJoinSessionState();
+            ClearCommandSessionState();
             _botCts = new CancellationTokenSource();
             StartChatQueue();
 
@@ -1529,11 +1531,13 @@ public partial class MainWindow : Window
         template.Contains("{name}", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Public replies: prefix "Name, " only when response does not already use {name}.
+    /// Public replies: prefix "Name, " only when response does not already use {name},
+    /// unless the category has SuppressNamePrefix.
     /// </summary>
-    private static string FormatPublicCommandReply(string speaker, string bodyAfterTemplate, bool hasNameInTemplate)
+    private static string FormatPublicCommandReply(
+        string speaker, string bodyAfterTemplate, bool hasNameInTemplate, bool suppressNamePrefix = false)
     {
-        if (hasNameInTemplate)
+        if (suppressNamePrefix || hasNameInTemplate)
             return bodyAfterTemplate;
         return $"{speaker}, {bodyAfterTemplate}";
     }
@@ -1644,6 +1648,7 @@ public partial class MainWindow : Window
             UpdateCategoryRow.Visibility = Visibility.Visible;
             if (CategoryNameEditBox != null)
                 CategoryNameEditBox.Text = _currentCommandCategory;
+            ApplyCategorySettingsToUi(_currentCommandCategory);
             ClearModalFieldErrors();
             UpdateCommandModalPlaceholders();
             UpdateCommandModalSaveEnabled();
@@ -2039,9 +2044,11 @@ public partial class MainWindow : Window
     {
         _commandsReady = false;
         _commandCategories = new Dictionary<string, Dictionary<string, List<CommandEntry>>>(StringComparer.OrdinalIgnoreCase);
+        _categorySettings = new Dictionary<string, CategorySettings>(StringComparer.OrdinalIgnoreCase);
         _activeCommandCategory = "General";
         _listenToChat = true;
         bool fileExisted = File.Exists(CommandsFile);
+        bool needsMigrateSave = false;
         try
         {
             if (fileExisted)
@@ -2050,37 +2057,55 @@ public partial class MainWindow : Window
                 using var doc = JsonDocument.Parse(json);
                 var root = doc.RootElement;
 
+                int schema = 1;
+                if (root.TryGetProperty("schemaVersion", out var sv) && sv.ValueKind == JsonValueKind.Number)
+                    schema = sv.GetInt32();
+
                 if (root.TryGetProperty("activeCategory", out var ac) && ac.ValueKind == JsonValueKind.String)
                     _activeCommandCategory = ac.GetString() ?? "General";
                 if (root.TryGetProperty("listenToChat", out var lc) &&
                     (lc.ValueKind == JsonValueKind.True || lc.ValueKind == JsonValueKind.False))
                     _listenToChat = lc.GetBoolean();
 
-                if (root.TryGetProperty("categories", out var catsEl) && catsEl.ValueKind == JsonValueKind.Object)
+                if (schema >= 2 &&
+                    root.TryGetProperty("categories", out var catsV2) &&
+                    catsV2.ValueKind == JsonValueKind.Object)
                 {
+                    LoadCommandsSchemaV2(catsV2);
+                }
+                else if (root.TryGetProperty("categories", out var catsEl) && catsEl.ValueKind == JsonValueKind.Object)
+                {
+                    // v1: raw category -> lang -> entries
                     var loaded = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<CommandEntry>>>>(catsEl.GetRawText());
                     if (loaded != null)
                         _commandCategories = NormalizeCommandCategories(loaded);
+                    needsMigrateSave = true;
                 }
             }
         }
         catch (Exception ex) { AppendLog("Load commands err: " + ex.Message, LogCategory.Error); }
 
-        // First install only — never wipe an existing file (same rule as messages.json).
-        // Do NOT re-seed on samplesVersion bumps or language-filtered zero counts.
         if (!fileExisted)
         {
             _commandCategories = CreateSampleCommandCategories();
             _activeCommandCategory = "General";
             _listenToChat = true;
+            EnsureSettingsForAllCategories();
             _commandsReady = true;
             SaveCommands();
             AppendLog("Bot Settings: first run — sample commands written to %LOCALAPPDATA%\\IMVUCompanion\\commands.json", LogCategory.Info);
         }
         else
         {
+            EnsureSettingsForAllCategories();
             int total = CountAllCommandsAcrossLanguages();
-            AppendLog($"Bot Settings loaded ({total} command(s), {_commandCategories.Count} categor(ies)) from %LOCALAPPDATA%\\IMVUCompanion\\commands.json", LogCategory.Info);
+            AppendLog($"Bot Settings loaded (schema v{(needsMigrateSave ? 1 : 2)} → {CommandsSchemaVersion}, {total} command(s), {_commandCategories.Count} categor(ies))", LogCategory.Info);
+            if (needsMigrateSave)
+            {
+                _commandsReady = true;
+                SaveCommands();
+                AppendLog("Bot Settings migrated commands.json to schema v2.", LogCategory.Info);
+            }
         }
 
         if (string.IsNullOrEmpty(_activeCommandCategory) || !_commandCategories.ContainsKey(_activeCommandCategory))
@@ -2088,6 +2113,50 @@ public partial class MainWindow : Window
 
         _currentCommandCategory = _activeCommandCategory;
         _commandsReady = true;
+    }
+
+    private void LoadCommandsSchemaV2(JsonElement catsEl)
+    {
+        var cats = new Dictionary<string, Dictionary<string, List<CommandEntry>>>(StringComparer.OrdinalIgnoreCase);
+        var settings = new Dictionary<string, CategorySettings>(StringComparer.OrdinalIgnoreCase);
+        foreach (var prop in catsEl.EnumerateObject())
+        {
+            string name = prop.Name.Trim();
+            if (string.IsNullOrEmpty(name)) continue;
+            var langs = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+            if (prop.Value.TryGetProperty("languages", out var langEl) && langEl.ValueKind == JsonValueKind.Object)
+            {
+                var loaded = JsonSerializer.Deserialize<Dictionary<string, List<CommandEntry>>>(langEl.GetRawText());
+                if (loaded != null)
+                {
+                    foreach (var lk in loaded)
+                    {
+                        if (lk.Value == null || lk.Value.Count == 0) continue;
+                        langs[lk.Key] = lk.Value;
+                    }
+                }
+            }
+            cats[name] = langs;
+            var cs = new CategorySettings();
+            if (prop.Value.TryGetProperty("settings", out var setEl) && setEl.ValueKind == JsonValueKind.Object)
+            {
+                if (setEl.TryGetProperty("allowRepeatTriggers", out var ar) &&
+                    (ar.ValueKind == JsonValueKind.True || ar.ValueKind == JsonValueKind.False))
+                    cs.AllowRepeatTriggers = ar.GetBoolean();
+                if (setEl.TryGetProperty("cooldownSeconds", out var cd) && cd.ValueKind == JsonValueKind.Number)
+                    cs.CooldownSeconds = Math.Clamp(cd.GetInt32(), 1, 3600);
+                if (setEl.TryGetProperty("suppressNamePrefix", out var sn) &&
+                    (sn.ValueKind == JsonValueKind.True || sn.ValueKind == JsonValueKind.False))
+                    cs.SuppressNamePrefix = sn.GetBoolean();
+                if (setEl.TryGetProperty("colorHex", out var ch) && ch.ValueKind == JsonValueKind.String)
+                    cs.ColorHex = ch.GetString() ?? cs.ColorHex;
+            }
+            if (string.IsNullOrWhiteSpace(cs.ColorHex))
+                cs.ColorHex = NextCategoryColor();
+            settings[name] = cs;
+        }
+        _commandCategories = cats;
+        _categorySettings = settings;
     }
 
     /// <summary>Case-insensitive maps + drop empty language lists left by older builds.</summary>
@@ -2123,18 +2192,35 @@ public partial class MainWindow : Window
             if (!string.IsNullOrEmpty(_currentCommandCategory))
                 _activeCommandCategory = _currentCommandCategory;
 
-            // Persist without empty language buckets
             var clean = NormalizeCommandCategories(_commandCategories);
             _commandCategories = clean;
+            EnsureSettingsForAllCategories();
+
+            var catsOut = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            foreach (var catKv in _commandCategories)
+            {
+                var s = GetOrCreateCategorySettings(catKv.Key);
+                catsOut[catKv.Key] = new
+                {
+                    settings = new
+                    {
+                        allowRepeatTriggers = s.AllowRepeatTriggers,
+                        cooldownSeconds = s.CooldownSeconds,
+                        suppressNamePrefix = s.SuppressNamePrefix,
+                        colorHex = s.ColorHex
+                    },
+                    languages = catKv.Value
+                };
+            }
 
             var toSave = new
             {
+                schemaVersion = CommandsSchemaVersion,
                 listenToChat = _listenToChat,
                 activeCategory = _activeCommandCategory,
-                categories = _commandCategories
+                categories = catsOut
             };
             string json = JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true });
-            // Atomic write (same pattern as messages.json)
             string tmp = CommandsFile + ".tmp";
             File.WriteAllText(tmp, json);
             File.Copy(tmp, CommandsFile, overwrite: true);
@@ -2164,24 +2250,6 @@ public partial class MainWindow : Window
         if (langDict.TryGetValue(lang, out var list) && list != null)
             return list;
         return new List<CommandEntry>();
-    }
-
-    private Dictionary<string, string> GetActiveCommandReplies()
-    {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (!_listenToChat) return result;
-
-        // Current language only — same !cmd may have a different Response per language
-        foreach (var catKv in _commandCategories)
-        {
-            foreach (var entry in GetCommandLangListOrEmpty(catKv.Value, _commandLanguage))
-            {
-                string cmd = NormalizeCommand(entry.Command);
-                if (!string.IsNullOrWhiteSpace(cmd) && !string.IsNullOrWhiteSpace(entry.Response))
-                    result[cmd] = entry.Response;
-            }
-        }
-        return result;
     }
 
     private static string NormalizeCommand(string cmd)
@@ -2283,12 +2351,15 @@ public partial class MainWindow : Window
                         catKv.Key.Contains(q, StringComparison.OrdinalIgnoreCase);
                     if (!hit) continue;
                 }
+                var cs = GetOrCreateCategorySettings(catKv.Key);
                 rows.Add(new CommandRowVm
                 {
                     Trigger = entry.Command,
                     Category = catKv.Key,
                     Response = entry.Response,
                     CategoryKey = catKv.Key,
+                    ColorHex = cs.ColorHex,
+                    CategoryBrush = BrushFromHex(cs.ColorHex),
                     Entry = entry
                 });
             }
@@ -2548,6 +2619,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (TryFindCrossCategoryTriggerConflict(cmd, _currentCommandCategory, _commandLanguage, out string otherCat))
+        {
+            ShowBotSettingsError(
+                "Trigger already used",
+                $"The trigger '{cmd}' already exists in category '{otherCat}'.\n\n" +
+                "The same !command cannot live in more than one category for the same language.\n" +
+                "Use a different trigger, or edit/remove it in the other category first.");
+            return;
+        }
+
         var underlying = EnsureCommandLangList(_currentCommandCategory);
         var entry = new CommandEntry { Command = cmd, Response = resp };
         underlying.Add(entry);
@@ -2594,10 +2675,18 @@ public partial class MainWindow : Window
             string newResp = CommandResponseEditBox?.Text?.Trim() ?? "";
             if (!string.IsNullOrEmpty(newCmd) && !string.IsNullOrEmpty(newResp))
             {
+                if (!string.Equals(NormalizeCommand(sel.Command), newCmd, StringComparison.OrdinalIgnoreCase) &&
+                    TryFindCrossCategoryTriggerConflict(newCmd, _currentCommandCategory, _commandLanguage, out string otherCat))
+                {
+                    ShowBotSettingsError(
+                        "Trigger already used",
+                        $"The trigger '{newCmd}' already exists in category '{otherCat}'.\n\n" +
+                        "The same !command cannot live in more than one category for the same language.");
+                    return;
+                }
                 int idx = underlying.IndexOf(sel);
                 if (idx < 0)
                 {
-                    // match by reference/content
                     idx = underlying.FindIndex(c =>
                         string.Equals(c.Command, sel.Command, StringComparison.OrdinalIgnoreCase) &&
                         c.Response == sel.Response);
@@ -2707,7 +2796,17 @@ public partial class MainWindow : Window
             return false;
         }
 
+        if (TryFindCrossCategoryTriggerConflict(cmd, newCat, _commandLanguage, out string otherCat))
+        {
+            ShowBotSettingsError(
+                "Trigger already used",
+                $"The trigger '{cmd}' already exists in category '{otherCat}'.\n\n" +
+                "The same !command cannot live in more than one category for the same language.");
+            return false;
+        }
+
         _commandCategories[newCat] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+        GetOrCreateCategorySettings(newCat);
         var entry = new CommandEntry { Command = cmd, Response = resp };
         EnsureCommandLangList(newCat).Add(entry);
 
@@ -2748,10 +2847,12 @@ public partial class MainWindow : Window
         if (!_commandCategories.ContainsKey(_currentCommandCategory))
             return false;
 
-        var data = _commandCategories[_currentCommandCategory];
-        _commandCategories.Remove(_currentCommandCategory);
+        string oldName = _currentCommandCategory;
+        var data = _commandCategories[oldName];
+        _commandCategories.Remove(oldName);
         _commandCategories[newName] = data;
-        if (_activeCommandCategory == _currentCommandCategory) _activeCommandCategory = newName;
+        MigrateCategorySettingsKeys(oldName, newName);
+        if (_activeCommandCategory == oldName) _activeCommandCategory = newName;
         _currentCommandCategory = newName;
         if (_editingCommandRow != null)
         {
@@ -2775,15 +2876,44 @@ public partial class MainWindow : Window
             !oldLang.TryGetValue(_commandLanguage, out var oldList))
             return;
 
+        string cmd = NormalizeCommand(row.Entry.Command);
+        if (TryFindCrossCategoryTriggerConflict(cmd, newCat, _commandLanguage, out string otherCat) &&
+            !string.Equals(otherCat, row.CategoryKey, StringComparison.OrdinalIgnoreCase))
+        {
+            // Target already has conflict with a third category; if conflict is only current source, OK
+        }
+        // Conflict if newCat would share trigger with any category other than the source we're leaving
+        foreach (var catKv in _commandCategories)
+        {
+            if (string.Equals(catKv.Key, newCat, StringComparison.OrdinalIgnoreCase)) continue;
+            if (string.Equals(catKv.Key, row.CategoryKey, StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (var e in GetCommandLangListOrEmpty(catKv.Value, _commandLanguage))
+            {
+                if (string.Equals(NormalizeCommand(e.Command), cmd, StringComparison.OrdinalIgnoreCase))
+                {
+                    ShowBotSettingsError(
+                        "Trigger already used",
+                        $"Cannot move '{cmd}' to '{newCat}': it already exists in category '{catKv.Key}'.");
+                    return;
+                }
+            }
+        }
+        // Also: newCat itself may already have this trigger — same category multiple responses OK
+        // so no check needed within newCat.
+
         oldList.RemoveAll(c =>
             string.Equals(c.Command, row.Entry.Command, StringComparison.OrdinalIgnoreCase) &&
             c.Response == row.Entry.Response);
         oldList.Remove(row.Entry);
         if (oldList.Count == 0) oldLang.Remove(_commandLanguage);
         if (oldLang.Values.All(l => l == null || l.Count == 0))
+        {
             _commandCategories.Remove(row.CategoryKey);
+            _categorySettings.Remove(row.CategoryKey);
+        }
 
         EnsureCommandLangList(newCat).Add(row.Entry);
+        GetOrCreateCategorySettings(newCat);
         row.CategoryKey = newCat;
         row.Category = newCat;
         _currentCommandCategory = newCat;
@@ -3218,24 +3348,38 @@ public partial class MainWindow : Window
                 return;
             }
 
-            foreach (var kv in GetActiveCommandReplies())
+            string userKey = (joinUserId ?? "").Trim();
+            foreach (var at in GetActiveTriggers())
             {
-                if (!CommandMatchesFirstToken(msg, kv.Key)) continue;
+                if (!CommandMatchesFirstToken(msg, at.Trigger)) continue;
 
-                // Dynamic session stats for !stats (stored in General)
-                if (string.Equals(kv.Key, "!stats", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(kv.Value, "{session_stats}", StringComparison.OrdinalIgnoreCase))
+                var settings = GetOrCreateCategorySettings(at.Category);
+                if (!AllowCommandReplyForUser(at.Category, userKey, settings))
+                {
+                    AppendLog($"[CMD skip] cooldown/once in '{at.Category}' for uid={userKey}", LogCategory.Skipped);
+                    return;
+                }
+
+                string responseTemplate = PickResponseFromBag(at.Category, at.Trigger, at.Responses);
+
+                // Dynamic session stats for !stats
+                if (string.Equals(at.Trigger, "!stats", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(responseTemplate, "{session_stats}", StringComparison.OrdinalIgnoreCase))
                 {
                     LogCommandTrigger(sp, firstCmd);
                     string stats = BuildSessionStatsMessage();
-                    string statsMsg = isWhisper ? stats : FormatPublicCommandReply(sp, stats, hasNameInTemplate: false);
+                    string statsMsg = isWhisper
+                        ? stats
+                        : FormatPublicCommandReply(sp, stats, hasNameInTemplate: false, settings.SuppressNamePrefix);
                     await SendToImvuChat(statsMsg, isWhisper, whisperRowRef, sp, firstCmd, ct: ct);
                     return;
                 }
 
-                string body = ApplyMessageTemplate(kv.Value, sp);
-                bool nameInTemplate = TemplateHasNamePlaceholder(kv.Value);
-                string r = isWhisper ? body : FormatPublicCommandReply(sp, body, nameInTemplate);
+                string body = ApplyMessageTemplate(responseTemplate, sp);
+                bool nameInTemplate = TemplateHasNamePlaceholder(responseTemplate);
+                string r = isWhisper
+                    ? body
+                    : FormatPublicCommandReply(sp, body, nameInTemplate, settings.SuppressNamePrefix);
                 LogCommandTrigger(sp, firstCmd);
                 await SendToImvuChat(r, isWhisper, whisperRowRef, sp, firstCmd, ct: ct);
                 return;
@@ -3909,6 +4053,10 @@ return results.slice(-maxLines);
         public double LeftColWidth { get; set; }
         public double RightColWidth { get; set; }
         public double ActivityLogHeight { get; set; }
+        public bool WelcomeExpanded { get; set; }
+        public bool BotSettingsExpanded { get; set; }
+        public bool AiSettingsExpanded { get; set; }
+        public bool AiProvidersExpanded { get; set; }
     }
 
     private void SaveUiLayout()
@@ -3943,6 +4091,10 @@ return results.slice(-maxLines);
                 LeftColWidth = leftW,
                 RightColWidth = rightW,
                 ActivityLogHeight = ActivityLogRow?.ActualHeight ?? 0,
+                WelcomeExpanded = WelcomeSettingsExpander?.IsExpanded == true,
+                BotSettingsExpanded = BotSettingsExpander?.IsExpanded == true,
+                AiSettingsExpanded = AiSettingsExpander?.IsExpanded == true,
+                AiProvidersExpanded = AiProvidersExpander?.IsExpanded == true,
             };
 
             File.WriteAllText(UiLayoutFile, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
@@ -3995,6 +4147,15 @@ return results.slice(-maxLines);
 
             if (state != null && ActivityLogRow != null && state.ActivityLogHeight >= 72)
                 ActivityLogRow.Height = new GridLength(state.ActivityLogHeight, GridUnitType.Pixel);
+
+            // Section expanders (open/closed remembered across restarts)
+            if (state != null)
+            {
+                if (WelcomeSettingsExpander != null) WelcomeSettingsExpander.IsExpanded = state.WelcomeExpanded;
+                if (BotSettingsExpander != null) BotSettingsExpander.IsExpanded = state.BotSettingsExpanded;
+                if (AiSettingsExpander != null) AiSettingsExpander.IsExpanded = state.AiSettingsExpanded;
+                if (AiProvidersExpander != null) AiProvidersExpander.IsExpanded = state.AiProvidersExpanded;
+            }
         }
         catch
         {

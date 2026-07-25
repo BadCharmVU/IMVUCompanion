@@ -1,7 +1,7 @@
 ; Inno Setup script — compile with ISCC.exe after running scripts/Publish-Release.ps1
 
 #ifndef AppVersion
-#define AppVersion "0.9.5"
+#define AppVersion "0.9.6"
 #endif
 #ifndef PublishDir
 #define PublishDir "..\publish"
@@ -53,8 +53,8 @@ Name: "{group}\{cm:UninstallProgram,IMVU Companion}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\IMVU Companion"; Filename: "{app}\IMVUCompanion.exe"; Tasks: desktopicon
 
 [Run]
-; Also run after silent auto-update (do not use skipifsilent)
-Filename: "{app}\IMVUCompanion.exe"; Description: "{cm:LaunchProgram,IMVU Companion}"; Flags: nowait postinstall
+; Interactive install: optional launch. Silent auto-update uses the apply script only (avoids 2 instances).
+Filename: "{app}\IMVUCompanion.exe"; Description: "{cm:LaunchProgram,IMVU Companion}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; User config (messages/commands/ai/layout) + WebView profile live under Local AppData
