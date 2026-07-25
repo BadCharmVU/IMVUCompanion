@@ -8,6 +8,7 @@ tools/**/obj/
 # Publish / installer scratch (never commit; never use for daily testing)
 publish/
 publish.*/
+publish097/
 release/
 release-*/
 rfresh/
