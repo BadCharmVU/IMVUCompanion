@@ -1531,13 +1531,13 @@ public partial class MainWindow : Window
         template.Contains("{name}", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Public replies: prefix "Name, " only when response does not already use {name},
-    /// unless the category has SuppressNamePrefix.
+    /// Public replies: optional "Name, " prefix only when category UseNamePrefix is on
+    /// and the template does not already contain {name}. No auto-prefix by default.
     /// </summary>
     private static string FormatPublicCommandReply(
-        string speaker, string bodyAfterTemplate, bool hasNameInTemplate, bool suppressNamePrefix = false)
+        string speaker, string bodyAfterTemplate, bool hasNameInTemplate, bool useNamePrefix = false)
     {
-        if (suppressNamePrefix || hasNameInTemplate)
+        if (!useNamePrefix || hasNameInTemplate)
             return bodyAfterTemplate;
         return $"{speaker}, {bodyAfterTemplate}";
     }
@@ -1550,16 +1550,29 @@ public partial class MainWindow : Window
         _editingCommandRow = row;
         _currentCommandCategory = row.CategoryKey;
         _activeCommandCategory = row.CategoryKey;
-        if (CommandEditBox != null) CommandEditBox.Text = row.Trigger;
+        SetCommandTriggerInput(row.Trigger);
         if (CommandResponseEditBox != null) CommandResponseEditBox.Text = row.Response;
         if (CategoryNameEditBox != null) CategoryNameEditBox.Text = row.CategoryKey;
         UpdateCommandModalPlaceholders();
         SetCommandCategoryComboQuiet(row.CategoryKey);
         if (CommandsList != null) CommandsList.SelectedItem = row.Entry;
         HideCategorySubRows();
-        if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Visible;
+        // Edit modal: Save + Exit only (Delete is only on the list trash icon)
+        if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Collapsed;
+        if (CommandUpdateCategoryBtn != null) CommandUpdateCategoryBtn.Visibility = Visibility.Visible;
+        if (CommandModalSaveBtn != null) CommandModalSaveBtn.Content = "Save";
         UpdateCommandModalSaveEnabled();
         if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Visible;
+    }
+
+    private int CountCommandsInCategory(string categoryKey)
+    {
+        if (!_commandCategories.TryGetValue(categoryKey, out var langs) || langs == null)
+            return 0;
+        int n = 0;
+        foreach (var list in langs.Values)
+            if (list != null) n += list.Count;
+        return n;
     }
 
     private void CommandRowDelete_Click(object sender, RoutedEventArgs e)
@@ -1569,11 +1582,27 @@ public partial class MainWindow : Window
         _pendingDeleteRow = row;
         string trigger = string.IsNullOrWhiteSpace(row.Trigger) ? "(empty)" : row.Trigger;
         string cat = string.IsNullOrWhiteSpace(row.Category) ? "(none)" : row.Category;
+        bool lastInCategory = CountCommandsInCategory(row.CategoryKey) <= 1;
         if (DeleteCommandMessage != null)
+        {
             DeleteCommandMessage.Text =
-                "You are about to\npermanently delete\n" +
-                $"trigger - {trigger}\n" +
-                $"category - {cat}";
+                "You are about to permanently delete:\n\n" +
+                $"Trigger: {trigger}";
+        }
+        if (DeleteCategoryAlsoCheck != null)
+        {
+            if (lastInCategory)
+            {
+                DeleteCategoryAlsoCheck.Visibility = Visibility.Visible;
+                DeleteCategoryAlsoCheck.IsChecked = false;
+                DeleteCategoryAlsoCheck.Content = $"Remove {cat} Category";
+            }
+            else
+            {
+                DeleteCategoryAlsoCheck.Visibility = Visibility.Collapsed;
+                DeleteCategoryAlsoCheck.IsChecked = false;
+            }
+        }
         if (DeleteCommandOverlay != null)
             DeleteCommandOverlay.Visibility = Visibility.Visible;
     }
@@ -1584,6 +1613,11 @@ public partial class MainWindow : Window
         _pendingDeleteRow = null;
         if (DeleteCommandOverlay != null)
             DeleteCommandOverlay.Visibility = Visibility.Collapsed;
+        if (DeleteCategoryAlsoCheck != null)
+        {
+            DeleteCategoryAlsoCheck.Visibility = Visibility.Collapsed;
+            DeleteCategoryAlsoCheck.IsChecked = false;
+        }
         if (wasEditing && AddCommandModal != null)
             AddCommandModal.Visibility = Visibility.Visible;
     }
@@ -1598,8 +1632,15 @@ public partial class MainWindow : Window
         var row = _pendingDeleteRow;
         _pendingDeleteRow = null;
         _editingCommandRow = null;
+        bool removeCategory = DeleteCategoryAlsoCheck?.IsChecked == true &&
+                              DeleteCategoryAlsoCheck.Visibility == Visibility.Visible;
         if (DeleteCommandOverlay != null)
             DeleteCommandOverlay.Visibility = Visibility.Collapsed;
+        if (DeleteCategoryAlsoCheck != null)
+        {
+            DeleteCategoryAlsoCheck.Visibility = Visibility.Collapsed;
+            DeleteCategoryAlsoCheck.IsChecked = false;
+        }
         if (AddCommandModal != null)
             AddCommandModal.Visibility = Visibility.Collapsed;
         if (CommandModalDeleteBtn != null)
@@ -1614,19 +1655,29 @@ public partial class MainWindow : Window
                 c.Response == row.Entry.Response);
             underlying.Remove(row.Entry);
 
-            // Drop empty languages then empty category
             if (underlying.Count == 0)
                 langDict.Remove(_commandLanguage);
             bool categoryEmpty = langDict.Count == 0 || langDict.Values.All(l => l == null || l.Count == 0);
-            if (categoryEmpty)
+            if (categoryEmpty && removeCategory)
             {
                 _commandCategories.Remove(row.CategoryKey);
+                _categorySettings.Remove(row.CategoryKey);
                 if (string.Equals(_currentCommandCategory, row.CategoryKey, StringComparison.OrdinalIgnoreCase))
                     _currentCommandCategory = _commandCategories.Keys.FirstOrDefault() ?? "General";
                 if (string.Equals(_activeCommandCategory, row.CategoryKey, StringComparison.OrdinalIgnoreCase))
                     _activeCommandCategory = _currentCommandCategory;
+                if (string.Equals(_commandFilterCategory, row.CategoryKey, StringComparison.OrdinalIgnoreCase))
+                    _commandFilterCategory = null;
                 PopulateCategoryCombo();
                 PopulateCategoryFilterCombo();
+            }
+            else if (categoryEmpty)
+            {
+                // Keep empty category (no languages / no commands) so it stays in dropdowns
+                if (!_commandCategories.ContainsKey(row.CategoryKey))
+                    _commandCategories[row.CategoryKey] =
+                        new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+                GetOrCreateCategorySettings(row.CategoryKey);
             }
 
             RefreshCommandsList();
@@ -1634,20 +1685,98 @@ public partial class MainWindow : Window
         }
     }
 
+    private string? _pendingDeleteCategoryKey;
+
+    private void EmptyCategoryAddTrigger_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrEmpty(_commandFilterCategory))
+        {
+            _currentCommandCategory = _commandFilterCategory;
+            _activeCommandCategory = _commandFilterCategory;
+        }
+        AddCommandOpen_Click(sender, e);
+        // Pre-select the empty category in the modal combo
+        if (!string.IsNullOrEmpty(_commandFilterCategory))
+            SetCommandCategoryComboQuiet(_commandFilterCategory);
+    }
+
+    private void EmptyCategoryDeleteCategory_Click(object sender, RoutedEventArgs e)
+    {
+        string cat = _commandFilterCategory ?? "";
+        if (string.IsNullOrEmpty(cat) || !_commandCategories.ContainsKey(cat)) return;
+        _pendingDeleteCategoryKey = cat;
+        if (DeleteCategoryMessage != null)
+            DeleteCategoryMessage.Text =
+                $"Delete category \"{cat}\"?\n\nThis permanently removes the category.";
+        if (DeleteCategoryOverlay != null)
+            DeleteCategoryOverlay.Visibility = Visibility.Visible;
+    }
+
+    private void DeleteCategoryCancel_Click(object sender, RoutedEventArgs e)
+    {
+        _pendingDeleteCategoryKey = null;
+        if (DeleteCategoryOverlay != null)
+            DeleteCategoryOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void DeleteCategoryConfirm_Click(object sender, RoutedEventArgs e)
+    {
+        string? cat = _pendingDeleteCategoryKey;
+        _pendingDeleteCategoryKey = null;
+        if (DeleteCategoryOverlay != null)
+            DeleteCategoryOverlay.Visibility = Visibility.Collapsed;
+        if (string.IsNullOrEmpty(cat)) return;
+
+        _commandCategories.Remove(cat);
+        _categorySettings.Remove(cat);
+        if (string.Equals(_currentCommandCategory, cat, StringComparison.OrdinalIgnoreCase))
+            _currentCommandCategory = _commandCategories.Keys.FirstOrDefault() ?? "General";
+        if (string.Equals(_activeCommandCategory, cat, StringComparison.OrdinalIgnoreCase))
+            _activeCommandCategory = _currentCommandCategory;
+        _commandFilterCategory = null;
+        PopulateCategoryCombo();
+        PopulateCategoryFilterCombo();
+        RefreshCommandsList();
+        SaveCommands();
+        AppendLog($"Category removed: {cat}", LogCategory.Info);
+    }
+
+    private void UpdateEmptyCategoryPanel()
+    {
+        if (CommandsEmptyCategoryPanel == null) return;
+        bool show =
+            !string.IsNullOrEmpty(_commandFilterCategory) &&
+            _commandCategories.ContainsKey(_commandFilterCategory) &&
+            CountCommandsInCategory(_commandFilterCategory) == 0 &&
+            string.IsNullOrWhiteSpace(_commandSearchText);
+        CommandsEmptyCategoryPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (show && CommandsEmptyCategoryHint != null)
+            CommandsEmptyCategoryHint.Text = $"No triggers in \"{_commandFilterCategory}\"";
+        if (CommandsListView != null)
+            CommandsListView.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
+    }
+
     private static readonly SolidColorBrush ModalFieldBorderNormal =
         new(System.Windows.Media.Color.FromRgb(0x3A, 0x3A, 0x58));
     private static readonly SolidColorBrush ModalFieldBorderError =
         new(System.Windows.Media.Color.FromRgb(0xEF, 0x44, 0x44));
 
+    /// <summary>True while Update Category panel is used to create a new empty category.</summary>
+    private bool _isAddingNewCategory;
+    private string _pendingNewCategoryColor = "#7DD3FC";
+
     private void ShowUpdateCategoryRow_Click(object sender, RoutedEventArgs e)
     {
         if (AddCategoryRow != null) AddCategoryRow.Visibility = Visibility.Collapsed;
+        _isAddingNewCategory = false;
         RestoreCategoryComboAfterAddMode();
         if (UpdateCategoryRow != null)
         {
             UpdateCategoryRow.Visibility = Visibility.Visible;
             if (CategoryNameEditBox != null)
                 CategoryNameEditBox.Text = _currentCommandCategory;
+            if (CategoryNamePlaceholder != null)
+                CategoryNamePlaceholder.Text = "Category name";
             ApplyCategorySettingsToUi(_currentCommandCategory);
             ClearModalFieldErrors();
             UpdateCommandModalPlaceholders();
@@ -1657,18 +1786,36 @@ public partial class MainWindow : Window
 
     private void ShowAddCategoryRow_Click(object sender, RoutedEventArgs e)
     {
-        if (UpdateCategoryRow != null) UpdateCategoryRow.Visibility = Visibility.Collapsed;
-        if (AddCategoryRow != null)
+        if (AddCategoryRow != null) AddCategoryRow.Visibility = Visibility.Collapsed;
+        _isAddingNewCategory = true;
+        _pendingNewCategoryColor = NextCategoryColor();
+        RestoreCategoryComboAfterAddMode();
+        if (UpdateCategoryRow != null)
         {
-            AddCategoryRow.Visibility = Visibility.Visible;
-            if (NewCategoryTextBox != null) NewCategoryTextBox.Text = "";
-            // No category selected in dropdown while creating a new one — avoids wrong assignment
-            if (CommandCategoryCombo != null)
+            UpdateCategoryRow.Visibility = Visibility.Visible;
+            if (CategoryNameEditBox != null) CategoryNameEditBox.Text = "";
+            if (CategoryNamePlaceholder != null)
+                CategoryNamePlaceholder.Text = "New category name";
+            // Defaults for a brand-new category (not saved until Save)
+            _categorySettingsUiSyncing = true;
+            try
             {
-                CommandCategoryCombo.Items.Clear();
-                CommandCategoryCombo.SelectedIndex = -1;
-                CommandCategoryCombo.IsEnabled = false;
+                if (CategoryAllowRepeatCheck != null) CategoryAllowRepeatCheck.IsChecked = false;
+                if (CategoryCooldownBox != null)
+                {
+                    CategoryCooldownBox.Text = "30";
+                    CategoryCooldownBox.IsEnabled = false;
+                }
+                if (CategoryUseNamePrefixCheck != null) CategoryUseNamePrefixCheck.IsChecked = false;
+                if (CategoryCooldownBox != null) CategoryCooldownBox.Text = "";
+                if (CategoryCooldownPlaceholder != null) CategoryCooldownPlaceholder.Visibility = Visibility.Visible;
+                if (CategoryColorSwatch != null)
+                {
+                    CategoryColorSwatch.Background = BrushFromHex(_pendingNewCategoryColor);
+                    CategoryColorSwatch.ToolTip = _pendingNewCategoryColor;
+                }
             }
+            finally { _categorySettingsUiSyncing = false; }
             ClearModalFieldErrors();
             UpdateCommandModalPlaceholders();
             UpdateCommandModalSaveEnabled();
@@ -1677,6 +1824,7 @@ public partial class MainWindow : Window
 
     private void HideCategorySubRows()
     {
+        _isAddingNewCategory = false;
         if (UpdateCategoryRow != null) UpdateCategoryRow.Visibility = Visibility.Collapsed;
         if (AddCategoryRow != null) AddCategoryRow.Visibility = Visibility.Collapsed;
         RestoreCategoryComboAfterAddMode();
@@ -2145,9 +2293,13 @@ public partial class MainWindow : Window
                     cs.AllowRepeatTriggers = ar.GetBoolean();
                 if (setEl.TryGetProperty("cooldownSeconds", out var cd) && cd.ValueKind == JsonValueKind.Number)
                     cs.CooldownSeconds = Math.Clamp(cd.GetInt32(), 1, 3600);
-                if (setEl.TryGetProperty("suppressNamePrefix", out var sn) &&
+                // Prefer useNamePrefix; legacy suppressNamePrefix means the opposite
+                if (setEl.TryGetProperty("useNamePrefix", out var un) &&
+                    (un.ValueKind == JsonValueKind.True || un.ValueKind == JsonValueKind.False))
+                    cs.UseNamePrefix = un.GetBoolean();
+                else if (setEl.TryGetProperty("suppressNamePrefix", out var sn) &&
                     (sn.ValueKind == JsonValueKind.True || sn.ValueKind == JsonValueKind.False))
-                    cs.SuppressNamePrefix = sn.GetBoolean();
+                    cs.UseNamePrefix = !sn.GetBoolean();
                 if (setEl.TryGetProperty("colorHex", out var ch) && ch.ValueKind == JsonValueKind.String)
                     cs.ColorHex = ch.GetString() ?? cs.ColorHex;
             }
@@ -2206,7 +2358,7 @@ public partial class MainWindow : Window
                     {
                         allowRepeatTriggers = s.AllowRepeatTriggers,
                         cooldownSeconds = s.CooldownSeconds,
-                        suppressNamePrefix = s.SuppressNamePrefix,
+                        useNamePrefix = s.UseNamePrefix,
                         colorHex = s.ColorHex
                     },
                     languages = catKv.Value
@@ -2255,9 +2407,33 @@ public partial class MainWindow : Window
     private static string NormalizeCommand(string cmd)
     {
         cmd = (cmd ?? "").Trim().ToLowerInvariant();
+        // Operators never need to type ! — strip all leading bangs, then store with one !
+        while (cmd.StartsWith('!'))
+            cmd = cmd.Length > 1 ? cmd[1..].TrimStart() : "";
         if (string.IsNullOrEmpty(cmd)) return "";
-        if (!cmd.StartsWith("!")) cmd = "!" + cmd;
-        return cmd;
+        return "!" + cmd;
+    }
+
+    /// <summary>Word only for trigger input boxes (list still shows !cmd).</summary>
+    private static string TriggerWordForInput(string? storedOrRaw)
+    {
+        string n = NormalizeCommand(storedOrRaw ?? "");
+        return n.StartsWith('!') && n.Length > 1 ? n[1..] : n;
+    }
+
+    private void SetCommandTriggerInput(string? storedOrRaw)
+    {
+        if (CommandEditBox == null) return;
+        CommandEditBox.Text = TriggerWordForInput(storedOrRaw);
+    }
+
+    private void CommandEditBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (CommandEditBox == null) return;
+        // Silently drop ! so the field only ever shows the word
+        string word = TriggerWordForInput(CommandEditBox.Text);
+        if (!string.Equals(CommandEditBox.Text, word, StringComparison.Ordinal))
+            CommandEditBox.Text = word;
     }
 
     private void PopulateCategoryCombo()
@@ -2287,26 +2463,103 @@ public partial class MainWindow : Window
             CommandCategoryCombo.SelectedIndex = 0;
     }
 
+    private bool _commandFilterComboQuiet;
+
     private void PopulateCategoryFilterCombo()
     {
         if (CommandCategoryFilterCombo == null) return;
-        string? prev = (CommandCategoryFilterCombo.SelectedItem as ComboBoxItem)?.Content?.ToString();
-        CommandCategoryFilterCombo.Items.Clear();
-        CommandCategoryFilterCombo.Items.Add(new ComboBoxItem { Content = "All categories", Tag = "" });
-        foreach (var key in _commandCategories.Keys)
-            CommandCategoryFilterCombo.Items.Add(new ComboBoxItem { Content = key, Tag = key });
-        if (!string.IsNullOrEmpty(prev))
+        string? prevTag = (CommandCategoryFilterCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString()
+                          ?? _commandFilterCategory
+                          ?? "";
+        _commandFilterComboQuiet = true;
+        try
         {
-            foreach (ComboBoxItem cbi in CommandCategoryFilterCombo.Items)
+            CommandCategoryFilterCombo.Items.Clear();
+            CommandCategoryFilterCombo.Items.Add(new ComboBoxItem { Content = "All categories", Tag = "" });
+            foreach (var key in _commandCategories.Keys)
+                CommandCategoryFilterCombo.Items.Add(new ComboBoxItem { Content = key, Tag = key });
+            SelectCategoryFilterComboCore(prevTag);
+        }
+        finally { _commandFilterComboQuiet = false; }
+    }
+
+    /// <summary>Select list filter combo by category key (null/empty = All). Does not reset page index.</summary>
+    private void SelectCategoryFilterCombo(string? categoryKey)
+    {
+        if (CommandCategoryFilterCombo == null) return;
+        _commandFilterComboQuiet = true;
+        try
+        {
+            SelectCategoryFilterComboCore(categoryKey ?? "");
+            _commandFilterCategory = string.IsNullOrEmpty(categoryKey) ? null : categoryKey;
+        }
+        finally { _commandFilterComboQuiet = false; }
+    }
+
+    private void SelectCategoryFilterComboCore(string tag)
+    {
+        if (CommandCategoryFilterCombo == null) return;
+        foreach (ComboBoxItem cbi in CommandCategoryFilterCombo.Items)
+        {
+            string t = cbi.Tag?.ToString() ?? "";
+            if (string.Equals(t, tag, StringComparison.OrdinalIgnoreCase) ||
+                (string.IsNullOrEmpty(tag) && string.IsNullOrEmpty(t)))
             {
-                if (string.Equals(cbi.Content?.ToString(), prev, StringComparison.OrdinalIgnoreCase))
-                {
-                    CommandCategoryFilterCombo.SelectedItem = cbi;
-                    return;
-                }
+                CommandCategoryFilterCombo.SelectedItem = cbi;
+                return;
             }
         }
-        CommandCategoryFilterCombo.SelectedIndex = 0;
+        if (CommandCategoryFilterCombo.Items.Count > 0)
+            CommandCategoryFilterCombo.SelectedIndex = 0;
+    }
+
+    /// <summary>Filter list to a category (page 0) and sync modal category combo.</summary>
+    private void ShowCategoryInList(string category)
+    {
+        if (string.IsNullOrWhiteSpace(category)) return;
+        _currentCommandCategory = category;
+        _activeCommandCategory = category;
+        _commandFilterCategory = category;
+        if (CommandSearchBox != null && !string.IsNullOrEmpty(CommandSearchBox.Text))
+        {
+            CommandSearchBox.Text = "";
+            _commandSearchText = "";
+            if (CommandSearchPlaceholder != null)
+                CommandSearchPlaceholder.Visibility = Visibility.Visible;
+        }
+        SelectCategoryFilterCombo(category);
+        SetCommandCategoryComboQuiet(category);
+        _commandsPageIndex = 0;
+        RefreshCommandsPagedView();
+    }
+
+    /// <summary>Filter list to the trigger's category and open the page where that row appears.</summary>
+    private void ShowTriggerInList(string category, string command, string response)
+    {
+        if (string.IsNullOrWhiteSpace(category)) return;
+        _currentCommandCategory = category;
+        _activeCommandCategory = category;
+        _commandFilterCategory = category;
+        if (CommandSearchBox != null && !string.IsNullOrEmpty(CommandSearchBox.Text))
+        {
+            CommandSearchBox.Text = "";
+            _commandSearchText = "";
+            if (CommandSearchPlaceholder != null)
+                CommandSearchPlaceholder.Visibility = Visibility.Visible;
+        }
+        SelectCategoryFilterCombo(category);
+        SetCommandCategoryComboQuiet(category);
+
+        var rows = BuildFlatCommandRows();
+        string wantCmd = NormalizeCommand(command);
+        int idx = rows.FindIndex(r =>
+            string.Equals(r.CategoryKey, category, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(NormalizeCommand(r.Trigger), wantCmd, StringComparison.OrdinalIgnoreCase) &&
+            r.Response == response);
+        if (idx < 0)
+            idx = rows.Count - 1;
+        _commandsPageIndex = idx < 0 ? 0 : idx / CommandsPageSize;
+        RefreshCommandsPagedView();
     }
 
     /// <summary>Commands for the active UI language only.</summary>
@@ -2403,6 +2656,8 @@ public partial class MainWindow : Window
             CommandsPageNextBtn.IsEnabled = canNext;
             CommandsPageNextBtn.Opacity = canNext ? 1.0 : 0.35;
         }
+
+        UpdateEmptyCategoryPanel();
     }
 
     private void SyncCurrentCommandsViewOnly()
@@ -2482,7 +2737,7 @@ public partial class MainWindow : Window
         if (CommandsList == null || CommandEditBox == null || CommandResponseEditBox == null) return;
         if (CommandsList.SelectedItem is CommandEntry sel)
         {
-            CommandEditBox.Text = sel.Command;
+            SetCommandTriggerInput(sel.Command);
             CommandResponseEditBox.Text = sel.Response;
         }
     }
@@ -2515,6 +2770,7 @@ public partial class MainWindow : Window
 
     private void CommandCategoryFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_commandFilterComboQuiet) return;
         if (CommandCategoryFilterCombo?.SelectedItem is not ComboBoxItem item) return;
         string tag = item.Tag?.ToString() ?? "";
         _commandFilterCategory = string.IsNullOrEmpty(tag) ? null : tag;
@@ -2553,6 +2809,8 @@ public partial class MainWindow : Window
         HideCategorySubRows();
         ClearModalFieldErrors();
         if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Collapsed;
+        if (CommandUpdateCategoryBtn != null) CommandUpdateCategoryBtn.Visibility = Visibility.Collapsed;
+        if (CommandModalSaveBtn != null) CommandModalSaveBtn.Content = "Add";
         UpdateCommandModalPlaceholders();
         UpdateCommandModalSaveEnabled();
         if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Visible;
@@ -2603,7 +2861,7 @@ public partial class MainWindow : Window
         string resp = CommandResponseEditBox?.Text?.Trim() ?? "";
         if (string.IsNullOrWhiteSpace(rawTrigger))
         {
-            AppendLog("Enter a trigger (e.g. !hi).", LogCategory.Warning);
+            AppendLog("Enter a trigger word (e.g. hi).", LogCategory.Warning);
             return;
         }
         if (string.IsNullOrWhiteSpace(resp))
@@ -2615,7 +2873,7 @@ public partial class MainWindow : Window
         string cmd = NormalizeCommand(rawTrigger);
         if (string.IsNullOrEmpty(cmd))
         {
-            AppendLog("Invalid trigger.", LogCategory.Warning);
+            AppendLog("Invalid trigger word.", LogCategory.Warning);
             return;
         }
 
@@ -2623,9 +2881,9 @@ public partial class MainWindow : Window
         {
             ShowBotSettingsError(
                 "Trigger already used",
-                $"The trigger '{cmd}' already exists in category '{otherCat}'.\n\n" +
-                "The same !command cannot live in more than one category for the same language.\n" +
-                "Use a different trigger, or edit/remove it in the other category first.");
+                $"The trigger word '{TriggerWordForInput(cmd)}' already exists in category '{otherCat}'.\n\n" +
+                "The same command word cannot live in more than one category for the same language.\n" +
+                "Use a different word, or edit/remove it in the other category first.");
             return;
         }
 
@@ -2633,12 +2891,12 @@ public partial class MainWindow : Window
         var entry = new CommandEntry { Command = cmd, Response = resp };
         underlying.Add(entry);
         _currentCommandsView.Add(entry);
-        if (CommandEditBox != null) CommandEditBox.Text = cmd;
+        SetCommandTriggerInput(cmd);
         if (CommandResponseEditBox != null) CommandResponseEditBox.Text = resp;
         PopulateCategoryCombo();
         PopulateCategoryFilterCombo();
-        RefreshCommandsList();
         SaveCommands();
+        ShowTriggerInList(_currentCommandCategory, cmd, resp);
         AppendLog($"Command added: {cmd} in {_currentCommandCategory}", LogCategory.Info);
     }
 
@@ -2680,8 +2938,8 @@ public partial class MainWindow : Window
                 {
                     ShowBotSettingsError(
                         "Trigger already used",
-                        $"The trigger '{newCmd}' already exists in category '{otherCat}'.\n\n" +
-                        "The same !command cannot live in more than one category for the same language.");
+                        $"The trigger word '{TriggerWordForInput(newCmd)}' already exists in category '{otherCat}'.\n\n" +
+                        "The same command word cannot live in more than one category for the same language.");
                     return;
                 }
                 int idx = underlying.IndexOf(sel);
@@ -2705,21 +2963,27 @@ public partial class MainWindow : Window
     {
         ClearModalFieldErrors();
 
-        // Add Category + command: require trigger, response, and new category name
+        // Legacy add-category row (name only) — still supported if visible
         if (AddCategoryRow?.Visibility == Visibility.Visible)
         {
-            if (!TryCommitAddCategoryWithCommand())
+            if (!TryCommitAddCategoryEmptyOrWithCommand(fromLegacyRow: true))
                 return;
             CloseCommandModalAfterSave();
             return;
         }
 
-        // Rename category only (no auto command)
+        // Category panel: add new empty category OR rename existing
         if (UpdateCategoryRow?.Visibility == Visibility.Visible)
         {
+            if (_isAddingNewCategory)
+            {
+                if (!TryCommitAddCategoryEmptyOrWithCommand(fromLegacyRow: false))
+                    return;
+                // Stay open; list already focuses the new category. Operator can add a trigger next.
+                return;
+            }
             if (!TryCommitRenameCategoryOnly())
                 return;
-            // Stay open after rename so user can still edit command if needed
             return;
         }
 
@@ -2730,7 +2994,16 @@ public partial class MainWindow : Window
         SetModalFieldError(CommandEditBox, missingTrigger);
         SetModalFieldError(CommandResponseEditBox, missingResp);
         if (missingTrigger || missingResp)
+        {
+            ShowBotSettingsError(
+                "Missing fields",
+                missingTrigger && missingResp
+                    ? "Enter Trigger Word (e.g. hi)\nand a Response before saving a command."
+                    : missingTrigger
+                        ? "Enter Trigger Word (e.g. hi).\nA response without a trigger is not allowed."
+                        : "Enter a Response.\nA trigger without a response is not allowed.");
             return;
+        }
 
         if (_editingCommandRow != null)
         {
@@ -2746,9 +3019,162 @@ public partial class MainWindow : Window
         }
         else
         {
-            AddCommand_Click(sender, e);
+            if (!TryAddCommandWithValidation())
+                return;
         }
         CloseCommandModalAfterSave();
+    }
+
+    /// <summary>Add command with red borders + error modal on incomplete data.</summary>
+    private bool TryAddCommandWithValidation()
+    {
+        string rawTrigger = CommandEditBox?.Text?.Trim() ?? "";
+        string resp = CommandResponseEditBox?.Text?.Trim() ?? "";
+        bool missingTrigger = string.IsNullOrWhiteSpace(rawTrigger);
+        bool missingResp = string.IsNullOrWhiteSpace(resp);
+        SetModalFieldError(CommandEditBox, missingTrigger);
+        SetModalFieldError(CommandResponseEditBox, missingResp);
+        if (missingTrigger || missingResp)
+        {
+            ShowBotSettingsError(
+                "Missing fields",
+                missingTrigger && missingResp
+                    ? "Enter Trigger Word (e.g. hi)\nand a Response."
+                    : missingTrigger
+                        ? "Enter Trigger Word (e.g. hi).\nA response without a trigger is not allowed."
+                        : "Enter a Response.\nA trigger without a response is not allowed.");
+            return false;
+        }
+        AddCommand_Click(this, new RoutedEventArgs());
+        return true;
+    }
+
+    /// <summary>
+    /// Create a new category (may be empty). Optionally attach trigger+response if both filled.
+    /// Name required. Partial command fields → red borders + error.
+    /// </summary>
+    private bool TryCommitAddCategoryEmptyOrWithCommand(bool fromLegacyRow)
+    {
+        string newCat = fromLegacyRow
+            ? (NewCategoryTextBox?.Text?.Trim() ?? "")
+            : (CategoryNameEditBox?.Text?.Trim() ?? "");
+        string rawTrigger = CommandEditBox?.Text?.Trim() ?? "";
+        string resp = CommandResponseEditBox?.Text?.Trim() ?? "";
+
+        bool missingCat = string.IsNullOrEmpty(newCat);
+        bool hasTrigger = !string.IsNullOrWhiteSpace(rawTrigger);
+        bool hasResp = !string.IsNullOrWhiteSpace(resp);
+
+        if (fromLegacyRow)
+            SetModalFieldError(NewCategoryTextBox, missingCat);
+        else
+            SetModalFieldError(CategoryNameEditBox, missingCat);
+
+        if (missingCat)
+        {
+            ShowBotSettingsError("Missing category name", "Enter a name for the new category.");
+            return false;
+        }
+
+        // Partial command: not allowed (must be both or neither for empty category)
+        if (hasTrigger != hasResp)
+        {
+            SetModalFieldError(CommandEditBox, !hasTrigger);
+            SetModalFieldError(CommandResponseEditBox, !hasResp);
+            ShowBotSettingsError(
+                "Incomplete command",
+                hasTrigger
+                    ? "You entered a Trigger Word without a Response.\nAdd a response, or clear the trigger to create an empty category."
+                    : "You entered a Response without a Trigger Word.\nAdd a trigger word (e.g. hi), or clear the response to create an empty category.");
+            return false;
+        }
+
+        if (_commandCategories.ContainsKey(newCat))
+        {
+            if (fromLegacyRow) SetModalFieldError(NewCategoryTextBox, true);
+            else SetModalFieldError(CategoryNameEditBox, true);
+            ShowBotSettingsError("Category exists", $"A category named '{newCat}' already exists.");
+            return false;
+        }
+
+        string? cmd = null;
+        if (hasTrigger && hasResp)
+        {
+            cmd = NormalizeCommand(rawTrigger);
+            if (string.IsNullOrEmpty(cmd))
+            {
+                SetModalFieldError(CommandEditBox, true);
+                ShowBotSettingsError(
+                    "Invalid trigger",
+                    "Enter Trigger Word (e.g. hi)\n(do not include ! — it is added automatically).");
+                return false;
+            }
+            if (TryFindCrossCategoryTriggerConflict(cmd, newCat, _commandLanguage, out string otherCat))
+            {
+                ShowBotSettingsError(
+                    "Trigger already used",
+                    $"The trigger word '{TriggerWordForInput(cmd)}' already exists in category '{otherCat}'.\n\n" +
+                    "The same command word cannot live in more than one category for the same language.");
+                return false;
+            }
+        }
+
+        _commandCategories[newCat] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+        var s = new CategorySettings
+        {
+            ColorHex = _isAddingNewCategory ? _pendingNewCategoryColor : NextCategoryColor(),
+            AllowRepeatTriggers = CategoryAllowRepeatCheck?.IsChecked == true,
+            CooldownSeconds = 30,
+            UseNamePrefix = CategoryUseNamePrefixCheck?.IsChecked == true
+        };
+        if (CategoryCooldownBox != null && int.TryParse(CategoryCooldownBox.Text?.Trim(), out int sec))
+            s.CooldownSeconds = Math.Clamp(sec, 1, 3600);
+        else
+            s.CooldownSeconds = 30;
+        if (CategoryColorSwatch?.Background is SolidColorBrush scb)
+        {
+            try
+            {
+                s.ColorHex = $"#{scb.Color.R:X2}{scb.Color.G:X2}{scb.Color.B:X2}";
+            }
+            catch { /* keep pending */ }
+        }
+        _categorySettings[newCat] = s;
+
+        string? addedResp = null;
+        if (cmd != null)
+        {
+            addedResp = resp;
+            EnsureCommandLangList(newCat).Add(new CommandEntry { Command = cmd, Response = resp });
+        }
+
+        _currentCommandCategory = newCat;
+        _activeCommandCategory = newCat;
+        _isAddingNewCategory = false;
+
+        if (CommandCategoryCombo != null)
+            CommandCategoryCombo.IsEnabled = true;
+        PopulateCategoryCombo();
+        PopulateCategoryFilterCombo();
+        // Immediately select the new category in the modal dropdown
+        SetCommandCategoryComboQuiet(newCat);
+        EnsureCategoryComboSelected();
+        ApplyCategorySettingsToUi(newCat);
+        if (CategoryNameEditBox != null) CategoryNameEditBox.Text = newCat;
+        if (CategoryNamePlaceholder != null) CategoryNamePlaceholder.Text = "Category name";
+        if (NewCategoryTextBox != null) NewCategoryTextBox.Text = "";
+        SaveCommands();
+        // List filter → new category (and page with new trigger if any)
+        if (cmd != null && addedResp != null)
+            ShowTriggerInList(newCat, cmd, addedResp);
+        else
+            ShowCategoryInList(newCat);
+        AppendLog(
+            cmd != null
+                ? $"Category '{newCat}' added with command {cmd}"
+                : $"Category '{newCat}' added (empty — no triggers yet)",
+            LogCategory.Info);
+        return true;
     }
 
     private void CloseCommandModalAfterSave()
@@ -2757,73 +3183,12 @@ public partial class MainWindow : Window
         HideCategorySubRows();
         if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Collapsed;
         if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Collapsed;
+        // Keep current list filter/page (already set when category/trigger was added)
         RefreshCommandsPagedView();
     }
 
-    /// <summary>
-    /// Add Category + Save: requires Trigger, Response, and new category name.
-    /// Creates the category, adds the command into it, saves, returns true on success.
-    /// Empty fields get a red border and nothing is saved.
-    /// </summary>
-    private bool TryCommitAddCategoryWithCommand()
-    {
-        string newCat = NewCategoryTextBox?.Text?.Trim() ?? "";
-        string rawTrigger = CommandEditBox?.Text?.Trim() ?? "";
-        string resp = CommandResponseEditBox?.Text?.Trim() ?? "";
-
-        bool missingCat = string.IsNullOrEmpty(newCat);
-        bool missingTrigger = string.IsNullOrWhiteSpace(rawTrigger);
-        bool missingResp = string.IsNullOrWhiteSpace(resp);
-
-        SetModalFieldError(NewCategoryTextBox, missingCat);
-        SetModalFieldError(CommandEditBox, missingTrigger);
-        SetModalFieldError(CommandResponseEditBox, missingResp);
-
-        if (missingCat || missingTrigger || missingResp)
-            return false;
-
-        if (_commandCategories.ContainsKey(newCat))
-        {
-            SetModalFieldError(NewCategoryTextBox, true);
-            AppendLog("Category already exists: " + newCat, LogCategory.Warning);
-            return false;
-        }
-
-        string cmd = NormalizeCommand(rawTrigger);
-        if (string.IsNullOrEmpty(cmd))
-        {
-            SetModalFieldError(CommandEditBox, true);
-            return false;
-        }
-
-        if (TryFindCrossCategoryTriggerConflict(cmd, newCat, _commandLanguage, out string otherCat))
-        {
-            ShowBotSettingsError(
-                "Trigger already used",
-                $"The trigger '{cmd}' already exists in category '{otherCat}'.\n\n" +
-                "The same !command cannot live in more than one category for the same language.");
-            return false;
-        }
-
-        _commandCategories[newCat] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
-        GetOrCreateCategorySettings(newCat);
-        var entry = new CommandEntry { Command = cmd, Response = resp };
-        EnsureCommandLangList(newCat).Add(entry);
-
-        _currentCommandCategory = newCat;
-        _activeCommandCategory = newCat;
-
-        if (CommandCategoryCombo != null)
-            CommandCategoryCombo.IsEnabled = true;
-        PopulateCategoryCombo();
-        PopulateCategoryFilterCombo();
-        EnsureCategoryComboSelected();
-        if (NewCategoryTextBox != null) NewCategoryTextBox.Text = "";
-        SaveCommands();
-        RefreshCommandsList();
-        AppendLog($"Category '{newCat}' added with command {cmd}", LogCategory.Info);
-        return true;
-    }
+    private bool TryCommitAddCategoryWithCommand() =>
+        TryCommitAddCategoryEmptyOrWithCommand(fromLegacyRow: true);
 
     private bool TryCommitRenameCategoryOnly()
     {
@@ -2893,7 +3258,7 @@ public partial class MainWindow : Window
                 {
                     ShowBotSettingsError(
                         "Trigger already used",
-                        $"Cannot move '{cmd}' to '{newCat}': it already exists in category '{catKv.Key}'.");
+                        $"Cannot move '{TriggerWordForInput(cmd)}' to '{newCat}':\nit already exists in category '{catKv.Key}'.");
                     return;
                 }
             }
@@ -3370,7 +3735,7 @@ public partial class MainWindow : Window
                     string stats = BuildSessionStatsMessage();
                     string statsMsg = isWhisper
                         ? stats
-                        : FormatPublicCommandReply(sp, stats, hasNameInTemplate: false, settings.SuppressNamePrefix);
+                        : FormatPublicCommandReply(sp, stats, hasNameInTemplate: false, settings.UseNamePrefix);
                     await SendToImvuChat(statsMsg, isWhisper, whisperRowRef, sp, firstCmd, ct: ct);
                     return;
                 }
@@ -3379,7 +3744,7 @@ public partial class MainWindow : Window
                 bool nameInTemplate = TemplateHasNamePlaceholder(responseTemplate);
                 string r = isWhisper
                     ? body
-                    : FormatPublicCommandReply(sp, body, nameInTemplate, settings.SuppressNamePrefix);
+                    : FormatPublicCommandReply(sp, body, nameInTemplate, settings.UseNamePrefix);
                 LogCommandTrigger(sp, firstCmd);
                 await SendToImvuChat(r, isWhisper, whisperRowRef, sp, firstCmd, ct: ct);
                 return;

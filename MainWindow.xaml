@@ -958,7 +958,7 @@
                                                         Height="28" Padding="10,4" FontSize="11" Margin="0,0,6,0"
                                                         Click="ImportCommandsOpen_Click"/>
                                                 <Button x:Name="AddCommandOpenBtn"
-                                                        Content="+ Add Command" Style="{StaticResource Win11Button}"
+                                                        Content="+ Add Trigger" Style="{StaticResource Win11Button}"
                                                         Height="28" Padding="10,4" FontSize="11"
                                                         Click="AddCommandOpen_Click"/>
                                             </StackPanel>
@@ -1015,8 +1015,9 @@
                                         <Grid>
                                         <Border CornerRadius="0,0,6,6" Background="#0F0F1C" BorderBrush="#3A3A58"
                                                 BorderThickness="1,0,1,1" ClipToBounds="True">
+                                            <Grid Height="156">
                                             <!-- ItemsControl (not ListBox): no selection / BringIntoView scroll that hid row 1 -->
-                                            <ItemsControl x:Name="CommandsListView" Height="156"
+                                            <ItemsControl x:Name="CommandsListView"
                                                           Background="Transparent"
                                                           Foreground="#C0C0E0" FontSize="12"
                                                           PreviewMouseWheel="NestedControl_PreviewMouseWheel">
@@ -1082,6 +1083,23 @@
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
+                                            <!-- Empty category (filter): actions inside list area, not a modal -->
+                                            <StackPanel x:Name="CommandsEmptyCategoryPanel" Visibility="Collapsed"
+                                                        VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                <TextBlock x:Name="CommandsEmptyCategoryHint"
+                                                           Text="No triggers in this category"
+                                                           Foreground="#8080A0" FontSize="12"
+                                                           HorizontalAlignment="Center" Margin="0,0,0,12"/>
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                    <Button Content="+ Add Trigger" Height="32" Padding="14,4"
+                                                            FontSize="12" Style="{StaticResource Win11Button}"
+                                                            Margin="0,0,10,0" Click="EmptyCategoryAddTrigger_Click"/>
+                                                    <Button Content="Delete Category" Height="32" Padding="14,4"
+                                                            FontSize="12" Style="{StaticResource Win11Button}"
+                                                            Click="EmptyCategoryDeleteCategory_Click"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                            </Grid>
                                         </Border>
 
                                         <!-- Material-style delete confirm over the list -->
@@ -1096,8 +1114,15 @@
                                                     <TextBlock x:Name="DeleteCommandMessage"
                                                                FontSize="14" Foreground="#E0E0FF"
                                                                HorizontalAlignment="Center" TextAlignment="Center"
-                                                               TextWrapping="Wrap" Margin="0,0,0,18"
+                                                               TextWrapping="Wrap" Margin="0,0,0,12"
                                                                LineHeight="22"/>
+                                                    <CheckBox x:Name="DeleteCategoryAlsoCheck"
+                                                              Style="{StaticResource CompanionCheckBox}"
+                                                              Content="Remove Category"
+                                                              HorizontalAlignment="Center"
+                                                              Visibility="Collapsed"
+                                                              IsChecked="False"
+                                                              Margin="0,0,0,16"/>
                                                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                                                         <Button Content="Cancel" Width="100" Height="36" Margin="0,0,12,0"
                                                                 Style="{StaticResource Win11Button}"
@@ -1105,6 +1130,31 @@
                                                         <Button Content="Delete" Width="100" Height="36"
                                                                 Style="{StaticResource Win11Button}"
                                                                 Click="DeleteCommandConfirm_Click"/>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Border>
+                                        </Border>
+
+                                        <!-- Confirm delete empty category -->
+                                        <Border x:Name="DeleteCategoryOverlay" Visibility="Collapsed"
+                                                Background="#CC12121F" Panel.ZIndex="30">
+                                            <Border Background="#252540" CornerRadius="12" Padding="20,18"
+                                                    BorderBrush="#404060" BorderThickness="1"
+                                                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                    MinWidth="260" MaxWidth="320">
+                                                <StackPanel>
+                                                    <TextBlock x:Name="DeleteCategoryMessage"
+                                                               FontSize="14" Foreground="#E0E0FF"
+                                                               HorizontalAlignment="Center" TextAlignment="Center"
+                                                               TextWrapping="Wrap" Margin="0,0,0,18"
+                                                               LineHeight="22"/>
+                                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                        <Button Content="Cancel" Width="100" Height="36" Margin="0,0,12,0"
+                                                                Style="{StaticResource Win11Button}"
+                                                                Click="DeleteCategoryCancel_Click"/>
+                                                        <Button Content="Delete" Width="100" Height="36"
+                                                                Style="{StaticResource Win11Button}"
+                                                                Click="DeleteCategoryConfirm_Click"/>
                                                     </StackPanel>
                                                 </StackPanel>
                                             </Border>
@@ -1134,27 +1184,6 @@
                                             </StackPanel>
                                         </Grid>
                                     </StackPanel>
-
-                                    <!-- Bot Settings error (OK only) -->
-                                    <Border x:Name="BotSettingsErrorOverlay" Visibility="Collapsed"
-                                            Background="#CC12121F" Panel.ZIndex="40">
-                                        <Border Background="#252540" CornerRadius="12" Padding="20,18"
-                                                BorderBrush="#404060" BorderThickness="1"
-                                                HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                MinWidth="280" MaxWidth="360">
-                                            <StackPanel>
-                                                <TextBlock x:Name="BotSettingsErrorTitle" Text="Error"
-                                                           FontSize="15" FontWeight="SemiBold" Foreground="#F87171"
-                                                           HorizontalAlignment="Center" Margin="0,0,0,10"/>
-                                                <TextBlock x:Name="BotSettingsErrorMessage"
-                                                           FontSize="13" Foreground="#E0E0FF" TextWrapping="Wrap"
-                                                           TextAlignment="Center" Margin="0,0,0,16" LineHeight="20"/>
-                                                <Button Content="OK" Width="100" Height="32" HorizontalAlignment="Center"
-                                                        Style="{StaticResource Win11Button}"
-                                                        Click="BotSettingsErrorOk_Click"/>
-                                            </StackPanel>
-                                        </Border>
-                                    </Border>
 
                                     <!-- Export modal -->
                                     <Border x:Name="ExportCommandsModal" Visibility="Collapsed"
@@ -1257,7 +1286,8 @@
                                                          Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
                                                          FontSize="14" VerticalContentAlignment="Center"
                                                          Padding="3,0,0,0"
-                                                         TextChanged="CommandModalFields_TextChanged">
+                                                         TextChanged="CommandModalFields_TextChanged"
+                                                         LostFocus="CommandEditBox_LostFocus">
                                                     <TextBox.Resources>
                                                         <Style TargetType="Border">
                                                             <Setter Property="CornerRadius" Value="8"/>
@@ -1279,12 +1309,12 @@
                                                            VerticalAlignment="Center" Margin="6,0,0,0"/>
                                             </Grid>
                                         </Grid>
-                                        <!-- Line 2: Category + Update Category + Add Category -->
+                                        <!-- Line 2: Category + Update (edit only) + Add Category -->
                                         <Grid Margin="0,0,0,8">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="8"/>
-                                                <ColumnDefinition Width="110"/>
+                                                <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="6"/>
                                                 <ColumnDefinition Width="110"/>
                                             </Grid.ColumnDefinitions>
@@ -1292,20 +1322,22 @@
                                                       Style="{StaticResource Win11ComboBoxButton}"
                                                       FontSize="14"
                                                       SelectionChanged="CommandCategoryCombo_SelectionChanged"/>
-                                            <Button Grid.Column="2" Content="Update Category" Height="32" Width="110"
-                                                    FontSize="11" Padding="4,0" Click="ShowUpdateCategoryRow_Click"/>
+                                            <Button x:Name="CommandUpdateCategoryBtn" Grid.Column="2"
+                                                    Content="Update Category" Height="32" MinWidth="110"
+                                                    FontSize="11" Padding="8,0" Click="ShowUpdateCategoryRow_Click"
+                                                    Visibility="Collapsed"/>
                                             <Button Grid.Column="4" Content="Add Category" Height="32" Width="110"
                                                     FontSize="11" Padding="4,0" Click="ShowAddCategoryRow_Click"/>
                                         </Grid>
-                                        <!-- Line 3: category rename + settings -->
+                                        <!-- Line 3: category name + settings (add or update) -->
                                         <StackPanel x:Name="UpdateCategoryRow" Visibility="Collapsed" Margin="0,0,0,8">
-                                            <Grid HorizontalAlignment="Center" Margin="0,0,0,8">
+                                            <Grid HorizontalAlignment="Stretch" Margin="0,0,0,8">
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="8"/>
                                                     <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
-                                                <Grid Grid.Column="0" Width="220">
+                                                <Grid Grid.Column="0">
                                                     <TextBox x:Name="CategoryNameEditBox" Height="32"
                                                              Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
                                                              FontSize="14" VerticalContentAlignment="Center"
@@ -1318,27 +1350,45 @@
                                                 </Grid>
                                                 <Button x:Name="CategoryColorSwatch" Grid.Column="2"
                                                         Width="32" Height="32" Padding="0" Cursor="Hand"
-                                                        ToolTip="Cycle category color" Click="CategoryColorSwatch_Click"
-                                                        Background="#7DD3FC" BorderBrush="#3A3A58" BorderThickness="1"/>
+                                                        ToolTip="Click to cycle category color"
+                                                        Click="CategoryColorSwatch_Click"
+                                                        Background="#7DD3FC" BorderBrush="#3A3A58" BorderThickness="1">
+                                                    <Button.Template>
+                                                        <ControlTemplate TargetType="Button">
+                                                            <Border Background="{TemplateBinding Background}"
+                                                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                                                    CornerRadius="6"
+                                                                    SnapsToDevicePixels="True"/>
+                                                        </ControlTemplate>
+                                                    </Button.Template>
+                                                </Button>
                                             </Grid>
-                                            <CheckBox x:Name="CategoryAllowRepeatCheck"
-                                                      Style="{StaticResource CompanionCheckBox}"
-                                                      Content="Allow repeated triggers"
-                                                      Margin="0,0,0,6" HorizontalAlignment="Center"
-                                                      Checked="CategorySettings_Changed" Unchecked="CategorySettings_Changed"/>
-                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,6">
-                                                <TextBlock Text="Cooldown (seconds)" Foreground="#A0A0C8" FontSize="11"
-                                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                                <TextBox x:Name="CategoryCooldownBox" Width="56" Height="28"
-                                                         Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
-                                                         FontSize="12" VerticalContentAlignment="Center"
-                                                         Text="30" IsEnabled="False"
-                                                         LostFocus="CategorySettings_Changed"/>
+                                            <!-- Line A (never wraps): Allow Multiple Replies + Cooldown -->
+                                            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                <CheckBox x:Name="CategoryAllowRepeatCheck"
+                                                          Style="{StaticResource CompanionCheckBox}"
+                                                          Content="Allow Multiple Replies"
+                                                          VerticalAlignment="Center" Margin="0,0,12,0"
+                                                          Checked="CategorySettings_Changed" Unchecked="CategorySettings_Changed"/>
+                                                <Grid Width="110" Height="28" VerticalAlignment="Center">
+                                                    <TextBox x:Name="CategoryCooldownBox" Height="28"
+                                                             Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
+                                                             FontSize="11" VerticalContentAlignment="Center"
+                                                             Padding="6,0,4,0" IsEnabled="False"
+                                                             LostFocus="CategorySettings_Changed"
+                                                             TextChanged="CategoryCooldownBox_TextChanged"/>
+                                                    <TextBlock x:Name="CategoryCooldownPlaceholder"
+                                                               Text="Cooldown (sec)" Foreground="#606080" FontSize="11"
+                                                               IsHitTestVisible="False" VerticalAlignment="Center"
+                                                               Margin="8,0,0,0"/>
+                                                </Grid>
                                             </StackPanel>
-                                            <CheckBox x:Name="CategorySuppressNameCheck"
+                                            <!-- Line B (own row): Use Prefix {name} -->
+                                            <CheckBox x:Name="CategoryUseNamePrefixCheck"
                                                       Style="{StaticResource CompanionCheckBox}"
-                                                      Content="Don't prefix replies with name"
-                                                      HorizontalAlignment="Center"
+                                                      Content="Use Prefix {name}"
+                                                      VerticalAlignment="Center"
                                                       Checked="CategorySettings_Changed" Unchecked="CategorySettings_Changed"/>
                                         </StackPanel>
                                         <!-- Add category — fixed 30-character width (not fluid / not text-sized) -->
@@ -1358,9 +1408,10 @@
                                                  SelectionChanged="CommandsList_SelectionChanged"
                                                  DisplayMemberPath="Display"/>
                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-                                            <Button x:Name="CommandModalSaveBtn" Content="Save" Click="SaveCommands_Click"
+                                            <Button x:Name="CommandModalSaveBtn" Content="Add" Click="SaveCommands_Click"
                                                     Margin="0,0,8,0" Height="32" Width="100"
                                                     Style="{StaticResource Win11Button}"/>
+                                            <!-- Delete only via list trash icon (not in edit modal) -->
                                             <Button x:Name="CommandModalDeleteBtn" Content="Delete" Click="CommandModalDelete_Click"
                                                     Margin="0,0,8,0" Height="32" Width="100"
                                                     Style="{StaticResource Win11Button}"
@@ -1369,6 +1420,27 @@
                                                     Height="32" Width="100"
                                                     Style="{StaticResource Win11Button}"/>
                                         </StackPanel>
+                                    </StackPanel>
+                                </Border>
+                            </Border>
+
+                            <!-- Errors above Add Command modal so they are always visible -->
+                            <Border x:Name="BotSettingsErrorOverlay" Visibility="Collapsed"
+                                    Background="#CC12121F" Panel.ZIndex="50">
+                                <Border Background="#252540" CornerRadius="12" Padding="20,18"
+                                        BorderBrush="#404060" BorderThickness="1"
+                                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                                        MinWidth="280" MaxWidth="380">
+                                    <StackPanel>
+                                        <TextBlock x:Name="BotSettingsErrorTitle" Text="Error"
+                                                   FontSize="15" FontWeight="SemiBold" Foreground="#F87171"
+                                                   HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                                        <TextBlock x:Name="BotSettingsErrorMessage"
+                                                   FontSize="13" Foreground="#E0E0FF" TextWrapping="Wrap"
+                                                   TextAlignment="Center" Margin="0,0,0,16" LineHeight="20"/>
+                                        <Button Content="OK" Width="100" Height="32" HorizontalAlignment="Center"
+                                                Style="{StaticResource Win11Button}"
+                                                Click="BotSettingsErrorOk_Click"/>
                                     </StackPanel>
                                 </Border>
                             </Border>

@@ -19,7 +19,8 @@ public partial class MainWindow
     {
         public bool AllowRepeatTriggers { get; set; }
         public int CooldownSeconds { get; set; } = 30;
-        public bool SuppressNamePrefix { get; set; }
+        /// <summary>When true, public replies get "Name, " unless the template already has {name}.</summary>
+        public bool UseNamePrefix { get; set; }
         public string ColorHex { get; set; } = "#7DD3FC";
     }
 
@@ -271,8 +272,8 @@ public partial class MainWindow
             s.AllowRepeatTriggers = CategoryAllowRepeatCheck.IsChecked == true;
         if (CategoryCooldownBox != null && int.TryParse(CategoryCooldownBox.Text?.Trim(), out int sec))
             s.CooldownSeconds = Math.Clamp(sec, 1, 3600);
-        if (CategorySuppressNameCheck != null)
-            s.SuppressNamePrefix = CategorySuppressNameCheck.IsChecked == true;
+        if (CategoryUseNamePrefixCheck != null)
+            s.UseNamePrefix = CategoryUseNamePrefixCheck.IsChecked == true;
     }
 
     private void ApplyCategorySettingsToUi(string category)
@@ -285,11 +286,16 @@ public partial class MainWindow
                 CategoryAllowRepeatCheck.IsChecked = s.AllowRepeatTriggers;
             if (CategoryCooldownBox != null)
             {
-                CategoryCooldownBox.Text = s.CooldownSeconds.ToString();
+                CategoryCooldownBox.Text = s.AllowRepeatTriggers ? s.CooldownSeconds.ToString() : "";
                 CategoryCooldownBox.IsEnabled = s.AllowRepeatTriggers;
             }
-            if (CategorySuppressNameCheck != null)
-                CategorySuppressNameCheck.IsChecked = s.SuppressNamePrefix;
+            if (CategoryCooldownPlaceholder != null)
+            {
+                CategoryCooldownPlaceholder.Visibility =
+                    string.IsNullOrEmpty(CategoryCooldownBox?.Text) ? Visibility.Visible : Visibility.Collapsed;
+            }
+            if (CategoryUseNamePrefixCheck != null)
+                CategoryUseNamePrefixCheck.IsChecked = s.UseNamePrefix;
             if (CategoryColorSwatch != null)
             {
                 CategoryColorSwatch.Background = BrushFromHex(s.ColorHex);
@@ -304,21 +310,39 @@ public partial class MainWindow
     private void CategorySettings_Changed(object sender, RoutedEventArgs e)
     {
         if (_categorySettingsUiSyncing || !_commandsReady) return;
-        LoadCategorySettingsFromUi();
         if (CategoryCooldownBox != null && CategoryAllowRepeatCheck != null)
             CategoryCooldownBox.IsEnabled = CategoryAllowRepeatCheck.IsChecked == true;
+        // New category not saved yet — keep UI only until Save
+        if (_isAddingNewCategory) return;
+        LoadCategorySettingsFromUi();
         SaveCommands();
         RefreshCommandsPagedView();
     }
 
     private void CategoryColorSwatch_Click(object sender, RoutedEventArgs e)
     {
-        if (string.IsNullOrEmpty(_currentCommandCategory) || !_commandsReady) return;
+        if (!_commandsReady) return;
+        e.Handled = true;
+
+        if (_isAddingNewCategory)
+        {
+            int idx = Array.FindIndex(CategoryColorPalette,
+                c => string.Equals(c, _pendingNewCategoryColor, StringComparison.OrdinalIgnoreCase));
+            _pendingNewCategoryColor =
+                CategoryColorPalette[(idx + 1 + CategoryColorPalette.Length) % CategoryColorPalette.Length];
+            if (CategoryColorSwatch != null)
+            {
+                CategoryColorSwatch.Background = BrushFromHex(_pendingNewCategoryColor);
+                CategoryColorSwatch.ToolTip = _pendingNewCategoryColor;
+            }
+            return;
+        }
+
+        if (string.IsNullOrEmpty(_currentCommandCategory)) return;
         var s = GetOrCreateCategorySettings(_currentCommandCategory);
-        // Cycle palette for now (full picker later)
-        int idx = Array.FindIndex(CategoryColorPalette,
+        int i = Array.FindIndex(CategoryColorPalette,
             c => string.Equals(c, s.ColorHex, StringComparison.OrdinalIgnoreCase));
-        s.ColorHex = CategoryColorPalette[(idx + 1 + CategoryColorPalette.Length) % CategoryColorPalette.Length];
+        s.ColorHex = CategoryColorPalette[(i + 1 + CategoryColorPalette.Length) % CategoryColorPalette.Length];
         if (CategoryColorSwatch != null)
         {
             CategoryColorSwatch.Background = BrushFromHex(s.ColorHex);
@@ -356,8 +380,11 @@ public partial class MainWindow
         public bool AllowRepeatTriggers { get; set; }
         [JsonPropertyName("cooldownSeconds")]
         public int CooldownSeconds { get; set; } = 30;
+        [JsonPropertyName("useNamePrefix")]
+        public bool UseNamePrefix { get; set; }
+        /// <summary>Legacy export field; inverted into UseNamePrefix when loading old files.</summary>
         [JsonPropertyName("suppressNamePrefix")]
-        public bool SuppressNamePrefix { get; set; }
+        public bool? SuppressNamePrefix { get; set; }
         [JsonPropertyName("colorHex")]
         public string ColorHex { get; set; } = "#7DD3FC";
     }
@@ -473,7 +500,7 @@ public partial class MainWindow
                 {
                     AllowRepeatTriggers = s.AllowRepeatTriggers,
                     CooldownSeconds = s.CooldownSeconds,
-                    SuppressNamePrefix = s.SuppressNamePrefix,
+                    UseNamePrefix = s.UseNamePrefix,
                     ColorHex = s.ColorHex
                 }
             };
@@ -677,9 +704,19 @@ public partial class MainWindow
         {
             AllowRepeatTriggers = st.AllowRepeatTriggers,
             CooldownSeconds = Math.Clamp(st.CooldownSeconds <= 0 ? 30 : st.CooldownSeconds, 1, 3600),
-            SuppressNamePrefix = st.SuppressNamePrefix,
+            UseNamePrefix = st.SuppressNamePrefix.HasValue
+                ? !st.SuppressNamePrefix.Value
+                : st.UseNamePrefix,
             ColorHex = string.IsNullOrWhiteSpace(st.ColorHex) ? NextCategoryColor() : st.ColorHex
         };
+    }
+
+    private void CategoryCooldownBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (CategoryCooldownPlaceholder == null || CategoryCooldownBox == null) return;
+        CategoryCooldownPlaceholder.Visibility = string.IsNullOrEmpty(CategoryCooldownBox.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private void ImportModal_DragOver(object sender, DragEventArgs e)
