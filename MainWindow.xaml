@@ -414,6 +414,92 @@
             </Setter>
         </Style>
 
+        <!-- Locked chrome: same shape as SectionExpander, but header is not a toggle. -->
+        <Style x:Key="DisabledSectionExpander" TargetType="Expander">
+            <Setter Property="Background" Value="#1E1E32"/>
+            <Setter Property="Foreground" Value="#454545"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="IsExpanded" Value="False"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Expander">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="0">
+                            <DockPanel LastChildFill="True">
+                                <Border DockPanel.Dock="Top" Background="Transparent" Padding="8,6,8,6"
+                                        Cursor="Arrow">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="28"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid Grid.Column="0" Width="22" Height="22"
+                                              HorizontalAlignment="Left" VerticalAlignment="Center">
+                                            <Ellipse Stroke="#454545" StrokeThickness="1.5" Fill="#252540"/>
+                                            <Path Data="M 0,0 L 5,5 L 0,10"
+                                                  Stroke="#454545" StrokeThickness="1.6"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  StrokeLineJoin="Round"
+                                                  Width="7" Height="10" Stretch="Uniform"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  Margin="1,0,0,0"/>
+                                        </Grid>
+                                        <ContentPresenter Grid.Column="1"
+                                                          ContentSource="Header"
+                                                          VerticalAlignment="Center"
+                                                          HorizontalAlignment="Stretch"
+                                                          RecognizesAccessKey="True"/>
+                                    </Grid>
+                                </Border>
+                            </DockPanel>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="RoomUserChip" TargetType="Button">
+            <Setter Property="Background" Value="#252540"/>
+            <Setter Property="Foreground" Value="#E0E0FF"/>
+            <Setter Property="BorderBrush" Value="#3A3A58"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="Margin" Value="3"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ChipBd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ChipBd" Property="BorderBrush" Value="#6A6A9A"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ChipBd" Property="Background" Value="#2A3A58"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="RecorderUserExpander" TargetType="Expander">
+            <Setter Property="Background" Value="#141428"/>
+            <Setter Property="Foreground" Value="#E0E0FF"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Margin" Value="0,0,0,4"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        </Style>
+
         <!-- Content box: 3px from parent L/R/T, 0 bottom; internal padding for controls -->
         <Style x:Key="SectionContentBox" TargetType="Border">
             <Setter Property="Background" Value="#161628"/>
@@ -474,6 +560,79 @@
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Reply draft: same chrome, text at the top; height follows wrap count only. -->
+        <Style x:Key="GrowingReplyTextBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+            <Setter Property="VerticalContentAlignment" Value="Top"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Padding" Value="3,4,3,4"/>
+            <Setter Property="MinHeight" Value="26"/>
+            <Setter Property="MaxHeight" Value="220"/>
+            <Setter Property="MaxLength" Value="1024"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="AcceptsReturn" Value="True"/>
+            <Setter Property="VerticalScrollBarVisibility" Value="Disabled"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ScrollViewer x:Name="PART_ContentHost"
+                                          Margin="0"
+                                          VerticalAlignment="Stretch"
+                                          HorizontalScrollBarVisibility="Disabled"
+                                          VerticalScrollBarVisibility="Disabled"
+                                          Focusable="False"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#5050A0"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#7070C0"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Greeting / DM message rows: hover tints fill only, no border flash. -->
+        <Style x:Key="MessageListItem" TargetType="ListBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#C0C0E0"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderThickness="0" Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1E1E38"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#242444"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -678,7 +837,7 @@
         <Grid.ColumnDefinitions>
             <ColumnDefinition x:Name="MainLeftCol" Width="2.2*" MinWidth="420"/>
             <ColumnDefinition Width="5"/>
-            <ColumnDefinition x:Name="MainRightCol" Width="*" MinWidth="360"/>
+            <ColumnDefinition x:Name="MainRightCol" Width="*" MinWidth="460"/>
         </Grid.ColumnDefinitions>
 
         <!-- Left: embedded IMVU -->
@@ -697,7 +856,7 @@
                         </StackPanel>
                     </DockPanel>
                 </Border>
-                <TextBlock DockPanel.Dock="Top" Text="Log in and open your chat room here, then Start Bot →"
+                <TextBlock DockPanel.Dock="Top" Text="Log in and open your chat room here, then Start →"
                            Foreground="#606080" FontSize="9" Margin="2,0,0,4"/>
                 <wv2:WebView2 x:Name="ImvuWebView" />
             </DockPanel>
@@ -752,7 +911,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Button x:Name="BotToggleBtn" Grid.Column="0" Content="Start Bot"
+                            <Button x:Name="BotToggleBtn" Grid.Column="0" Content="Start"
                                     Style="{StaticResource Win11BotToggleButton}"
                                     Height="28" MinHeight="28" MaxHeight="28"
                                     Click="BotToggleBtn_Click" Margin="0"
@@ -807,7 +966,7 @@
                                                Text="...is Not Greeting"
                                                Foreground="#FF5555" FontWeight="Normal"
                                                HorizontalAlignment="Right" TextAlignment="Right"
-                                               Visibility="Collapsed" VerticalAlignment="Center"
+                                               VerticalAlignment="Center"
                                                Margin="8,0,14,0"/>
                             </Grid>
                         </Expander.Header>
@@ -838,6 +997,7 @@
                                     <Border CornerRadius="6" Background="#0F0F1C" BorderBrush="#3A3A58"
                                             BorderThickness="1" ClipToBounds="True" Margin="0,0,0,6">
                                         <ListBox x:Name="Welcome1List" Height="72"
+                                                 ItemContainerStyle="{StaticResource MessageListItem}"
                                                  SelectionChanged="Welcome1List_SelectionChanged"
                                                  PreviewMouseWheel="NestedControl_PreviewMouseWheel"
                                                  Background="Transparent" BorderThickness="0"
@@ -882,6 +1042,7 @@
                                         <Border CornerRadius="6" Background="#0F0F1C" BorderBrush="#3A3A58"
                                                 BorderThickness="1" ClipToBounds="True" Margin="0,0,0,6">
                                             <ListBox x:Name="Welcome2List" Height="72"
+                                                     ItemContainerStyle="{StaticResource MessageListItem}"
                                                      SelectionChanged="Welcome2List_SelectionChanged"
                                                      PreviewMouseWheel="NestedControl_PreviewMouseWheel"
                                                      Background="Transparent" BorderThickness="0"
@@ -910,7 +1071,7 @@
                         </StackPanel>
                     </Expander>
 
-                    <!-- ========== Bot Settings (!commands) — same chrome as Welcome ========== -->
+                    <!-- ========== Trigger Settings (!commands) — same chrome as Welcome ========== -->
                     <Expander x:Name="BotSettingsExpander" Style="{StaticResource SectionExpander}"
                               IsExpanded="False" Margin="0,0,0,6"
                               Loaded="BotSettingsExpander_Layout"
@@ -921,14 +1082,14 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="Bot Settings"
+                                <TextBlock Grid.Column="0" Text="Trigger Settings"
                                            Foreground="#E8E8FF" FontSize="14" FontWeight="SemiBold"
                                            VerticalAlignment="Center"/>
                                 <TextBlock x:Name="BotNotListeningHint" Grid.Column="1"
                                            Text="...is Not Listening"
                                            Foreground="#FF5555" FontWeight="Normal"
                                            HorizontalAlignment="Right" TextAlignment="Right"
-                                           Visibility="Collapsed" VerticalAlignment="Center"
+                                           VerticalAlignment="Center"
                                            Margin="8,0,14,0"/>
                             </Grid>
                         </Expander.Header>
@@ -964,7 +1125,7 @@
                                             </StackPanel>
                                         </Grid>
                                         <Border Background="#0F0F1C" BorderBrush="#3A3A58" BorderThickness="1"
-                                                CornerRadius="6" Height="28" MinWidth="340" Margin="0,0,0,8"
+                                                CornerRadius="6" Height="28" Margin="0,0,0,8"
                                                 HorizontalAlignment="Stretch">
                                             <Grid>
                                                 <DockPanel>
@@ -1028,12 +1189,12 @@
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
-                                                        <Border Background="Transparent"
-                                                                BorderBrush="#2A2A40" BorderThickness="0,0,0,1"
+                                                        <Border BorderBrush="#2A2A40" BorderThickness="0,0,0,1"
                                                                 Height="26" Padding="0" SnapsToDevicePixels="True"
                                                                 ClipToBounds="True">
                                                             <Border.Style>
                                                                 <Style TargetType="Border">
+                                                                    <Setter Property="Background" Value="Transparent"/>
                                                                     <Style.Triggers>
                                                                         <Trigger Property="IsMouseOver" Value="True">
                                                                             <Setter Property="Background" Value="#1E1E38"/>
@@ -1193,7 +1354,7 @@
                                                 HorizontalAlignment="Center" VerticalAlignment="Center"
                                                 MinWidth="300" MaxWidth="380">
                                             <StackPanel>
-                                                <TextBlock Text="Export Bot Settings" FontSize="15" FontWeight="SemiBold"
+                                                <TextBlock Text="Export Trigger Settings" FontSize="15" FontWeight="SemiBold"
                                                            Foreground="#E8E8FF" HorizontalAlignment="Center" Margin="0,0,0,12"/>
                                                 <TextBlock Text="Choose categories to export:" Foreground="#A0A0C8"
                                                            FontSize="11" Margin="0,0,0,6"/>
@@ -1232,7 +1393,7 @@
                                                 MinWidth="300" MaxWidth="380"
                                                 AllowDrop="True" Drop="ImportModal_Drop" DragOver="ImportModal_DragOver">
                                             <StackPanel>
-                                                <TextBlock Text="Import Bot Settings" FontSize="15" FontWeight="SemiBold"
+                                                <TextBlock Text="Import Trigger Settings" FontSize="15" FontWeight="SemiBold"
                                                            Foreground="#E8E8FF" HorizontalAlignment="Center" Margin="0,0,0,12"/>
                                                 <TextBlock Text="Select a JSON file or drop it here." Foreground="#A0A0C8"
                                                            FontSize="11" Margin="0,0,0,6"/>
@@ -1457,11 +1618,200 @@
                         </Grid>
                     </Expander>
 
-                    <!-- ========== AI Settings (built-in companion AI) ========== -->
-                    <Expander x:Name="AiSettingsExpander" Style="{StaticResource SectionExpander}"
-                              IsExpanded="False" Margin="0,0,0,6">
+                    <!-- ========== Message Recorder Machine ========== -->
+                    <Expander x:Name="RecorderExpander" Style="{StaticResource SectionExpander}"
+                              IsExpanded="False" Margin="0,0,0,6"
+                              Loaded="RecorderExpander_Layout"
+                              SizeChanged="RecorderExpander_SizeChanged">
                         <Expander.Header>
-                            <TextBlock Text="AI Settings" Foreground="#E8E8FF" FontSize="14" FontWeight="SemiBold"
+                            <Grid x:Name="RecorderHeaderRoot" HorizontalAlignment="Stretch" MinWidth="160">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Message Recorder Machine"
+                                           Foreground="#E8E8FF" FontSize="14" FontWeight="SemiBold"
+                                           VerticalAlignment="Center"/>
+                                <TextBlock x:Name="RecorderHint" Grid.Column="1"
+                                           Text="...is Not Recording"
+                                           Foreground="#FF5555" FontWeight="Normal"
+                                           HorizontalAlignment="Right" TextAlignment="Right"
+                                           VerticalAlignment="Center"
+                                           Margin="8,0,14,0"/>
+                            </Grid>
+                        </Expander.Header>
+                        <Grid>
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource SectionTip}"
+                                       Text="Message recorder machine for when you gone AFK"/>
+                            <Border Style="{StaticResource SectionContentBox}">
+                                <StackPanel>
+                                    <Grid Height="28" Margin="0,0,0,6">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox x:Name="RecorderEnabledCheck"
+                                                  Style="{StaticResource CompanionCheckBox}"
+                                                  Content="Turn on Message Recorder" VerticalAlignment="Center"
+                                                  Margin="0,0,8,0"
+                                                  Checked="RecorderEnabledCheck_Changed"
+                                                  Unchecked="RecorderEnabledCheck_Changed"/>
+                                        <TextBlock x:Name="RecorderTriggerLabel" Grid.Column="2"
+                                                   Text="Trigger:" Foreground="#A0A0C8" FontSize="11"
+                                                   VerticalAlignment="Center" Margin="8,0,6,0"
+                                                   Visibility="Collapsed"/>
+                                        <TextBox x:Name="RecorderTriggerBox" Grid.Column="3"
+                                                 Height="26" Width="160" MinWidth="120" MaxWidth="160"
+                                                 HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                 Visibility="Collapsed"
+                                                 Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
+                                                 FontSize="11" VerticalContentAlignment="Center"
+                                                 PreviewMouseWheel="NestedControl_PreviewMouseWheel"
+                                                 LostFocus="RecorderTriggerBox_LostFocus"
+                                                 ToolTip="Users send this trigger to leave you a recorded message."/>
+                                    </Grid>
+                                    <StackPanel x:Name="RecorderUsersPanel"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+
+                            <Border x:Name="RecorderReplyModal" Visibility="Collapsed"
+                                    Background="#E012121F" CornerRadius="6" Panel.ZIndex="20">
+                                <Border Background="#252540" BorderBrush="#404060" BorderThickness="1"
+                                        CornerRadius="14" Padding="16" Margin="8"
+                                        VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                                    <StackPanel>
+                                        <TextBlock x:Name="RecorderReplyTitle" Text="Reply"
+                                                   FontSize="14" FontWeight="SemiBold"
+                                                   Foreground="#E8E8FF" Margin="0,0,0,10"/>
+                                        <TextBox x:Name="RecorderReplyBox" Style="{StaticResource GrowingReplyTextBox}"
+                                                 Margin="0,0,0,4"
+                                                 Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
+                                                 PreviewMouseWheel="NestedControl_PreviewMouseWheel"
+                                                 TextChanged="RecorderReplyBox_TextChanged"/>
+                                        <TextBlock x:Name="RecorderReplyCount" Text="0/1024"
+                                                   FontSize="10" Foreground="#8080A8"
+                                                   HorizontalAlignment="Right" Margin="0,0,0,10"/>
+                                        <Button Content="CURRENTLY IN DEVELOPMENT" Height="28"
+                                                HorizontalAlignment="Stretch"
+                                                Style="{StaticResource Win11Button}"
+                                                Click="RecorderReplyDev_Click"/>
+                                    </StackPanel>
+                                </Border>
+                            </Border>
+                        </Grid>
+                    </Expander>
+
+                    <!-- ========== DM Settings ========== -->
+                    <Expander x:Name="DmSettingsExpander" Style="{StaticResource SectionExpander}"
+                              IsExpanded="False" Margin="0,0,0,6"
+                              Loaded="DmSettingsExpander_Layout"
+                              SizeChanged="DmSettingsExpander_SizeChanged">
+                        <Expander.Header>
+                            <Grid x:Name="DmSettingsHeaderRoot" HorizontalAlignment="Stretch" MinWidth="160">
+                                <TextBlock Text="DM Settings"
+                                           Foreground="#E8E8FF" FontSize="14" FontWeight="SemiBold"
+                                           VerticalAlignment="Center"/>
+                            </Grid>
+                        </Expander.Header>
+                        <Grid MinHeight="80">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource SectionTip}"
+                                           Text="Send a notice to someone currently in the room."/>
+                                <Border Style="{StaticResource SectionContentBox}">
+                                    <StackPanel>
+                                        <Grid Height="28" MinWidth="424" Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" MinWidth="250"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <ComboBox x:Name="DmMessageCombo" Height="26"
+                                                      MinWidth="250" HorizontalAlignment="Stretch"
+                                                      VerticalAlignment="Center"
+                                                      SelectionChanged="DmMessageCombo_SelectionChanged"/>
+                                            <Button Grid.Column="1" Content="Edit" Height="26" MinWidth="52"
+                                                    Padding="10,4" FontSize="11" Margin="6,0,0,0"
+                                                    Style="{StaticResource Win11Button}"
+                                                    Click="DmEditMessages_Click"/>
+                                            <Button x:Name="DmSendBtn" Grid.Column="2" Content="Send Public"
+                                                    Height="26" MinWidth="100" Padding="10,4" FontSize="11"
+                                                    Margin="6,0,0,0" Style="{StaticResource Win11Button}"
+                                                    Click="DmSend_Click"/>
+                                        </Grid>
+                                        <UniformGrid x:Name="DmUsersGrid" Columns="2"/>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Edit DM messages modal — same idea as Greeting editor -->
+                            <Border x:Name="DmEditModal" Visibility="Collapsed"
+                                    Background="#E012121F" CornerRadius="6" Panel.ZIndex="20">
+                                <Border Background="#252540" BorderBrush="#404060" BorderThickness="1"
+                                        CornerRadius="14" Padding="16" Margin="8"
+                                        VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                                    <StackPanel>
+                                        <TextBlock Text="Edit DM Messages" FontSize="14" FontWeight="SemiBold"
+                                                   Foreground="#E8E8FF" Margin="0,0,0,10"/>
+                                        <Grid Height="28" Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="Delivery Method:" Foreground="#A0A0C8" FontSize="11"
+                                                       VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                            <ComboBox x:Name="DmEditDeliveryCombo" Grid.Column="1" Height="26"
+                                                      MinWidth="120" MaxWidth="160" HorizontalAlignment="Left"
+                                                      VerticalAlignment="Center">
+                                                <ComboBoxItem Content="Public" Tag="public" IsSelected="True"/>
+                                                <ComboBoxItem Content="Whisper" Tag="whisper"/>
+                                            </ComboBox>
+                                        </Grid>
+                                        <Border CornerRadius="6" Background="#0F0F1C" BorderBrush="#3A3A58"
+                                                BorderThickness="1" ClipToBounds="True" Margin="0,0,0,6">
+                                            <ListBox x:Name="DmEditList" Height="72"
+                                                     ItemContainerStyle="{StaticResource MessageListItem}"
+                                                     SelectionChanged="DmEditList_SelectionChanged"
+                                                     PreviewMouseWheel="NestedControl_PreviewMouseWheel"
+                                                     Background="Transparent" BorderThickness="0"
+                                                     Foreground="#C0C0E0"
+                                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                     HorizontalContentAlignment="Stretch"/>
+                                        </Border>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox x:Name="DmEditBox" Grid.Column="0" Height="26" Margin="0,0,6,0"
+                                                     Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
+                                                     PreviewMouseWheel="NestedControl_PreviewMouseWheel"
+                                                     ToolTip="Use {name} for the selected user."/>
+                                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                                <Button Content="Add" Click="DmEditAdd_Click" Margin="0,0,4,0"/>
+                                                <Button Content="Update" Click="DmEditUpdate_Click" Margin="0,0,4,0"/>
+                                                <Button Content="Delete" Click="DmEditDelete_Click"/>
+                                            </StackPanel>
+                                        </Grid>
+                                        <Button Content="Done" Height="28" Margin="0,10,0,0"
+                                                HorizontalAlignment="Right" Width="90"
+                                                Style="{StaticResource Win11Button}"
+                                                Click="DmEditDone_Click"/>
+                                    </StackPanel>
+                                </Border>
+                            </Border>
+                        </Grid>
+                    </Expander>
+
+                    <!-- ========== AI Settings (built-in companion AI) ========== -->
+                    <Expander x:Name="AiSettingsExpander" Style="{StaticResource DisabledSectionExpander}"
+                              IsExpanded="False" Margin="0,0,0,6"
+                              Expanded="DisabledAiSection_Expanded">
+                        <Expander.Header>
+                            <TextBlock Text="AI Settings" Foreground="#454545" FontSize="14" FontWeight="SemiBold"
                                        VerticalAlignment="Center"/>
                         </Expander.Header>
                         <StackPanel>
@@ -1483,10 +1833,11 @@
                         </StackPanel>
                     </Expander>
 
-                    <Expander x:Name="AiProvidersExpander" Style="{StaticResource SectionExpander}"
-                              IsExpanded="False" Margin="0,0,0,6">
+                    <Expander x:Name="AiProvidersExpander" Style="{StaticResource DisabledSectionExpander}"
+                              IsExpanded="False" Margin="0,0,0,6"
+                              Expanded="DisabledAiSection_Expanded">
                         <Expander.Header>
-                            <TextBlock Text="AI Providers" Foreground="#E8E8FF" FontSize="14" FontWeight="SemiBold"
+                            <TextBlock Text="AI Providers" Foreground="#454545" FontSize="14" FontWeight="SemiBold"
                                        VerticalAlignment="Center"/>
                         </Expander.Header>
                         <StackPanel>

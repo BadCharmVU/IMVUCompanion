@@ -32,7 +32,10 @@ public enum LogCategory
     Trigger,
     Whisper,
     Warning,
-    Error
+    Error,
+    Left,
+    PublicDm,
+    WhisperDm
 }
 
 public partial class MainWindow : Window
@@ -283,7 +286,7 @@ public partial class MainWindow : Window
             _aliveTimer.Tick += (s, args) =>
             {
                 try { UpdateStatusBar(); } catch { }
-                try { _ = CheckRoomPresenceWhileBotRunningAsync(); } catch { }
+                try { _ = CheckRoomPresenceAsync(); } catch { }
             };
             _aliveTimer.Start();
             UpdateStatusBar();
@@ -325,6 +328,7 @@ public partial class MainWindow : Window
             InitAiProvidersUi();
             if (CompanionAiTriggerBox != null)
                 CompanionAiTriggerBox.Text = _aiSettings.CompanionAiTrigger ?? "";
+            InitRoomTools();
 
             AppendLog($"{AppVersion.ShortLabel} — {_sessionStartedAt:MM.dd.yyyy - HH:mm:ss}", LogCategory.Info, toActivityLog: true);
             InitAutoUpdateUi();
@@ -343,6 +347,9 @@ public partial class MainWindow : Window
         // Swapped: Trigger uses former Whisper brown; Whisper uses former Trigger gold
         LogCategory.Trigger => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xA6, 0x7B, 0x5B)),
         LogCategory.Whisper => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xD5, 0xA5, 0x48)),
+        LogCategory.Left => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFB, 0x71, 0x85)),
+        LogCategory.PublicDm => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x7D, 0xD3, 0xFC)),
+        LogCategory.WhisperDm => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xD5, 0xA5, 0x48)),
         LogCategory.Warning => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFB, 0x92, 0x3C)),
         LogCategory.Error => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xF8, 0x71, 0x71)),
         _ => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC0, 0xC0, 0xE0))
@@ -980,13 +987,13 @@ public partial class MainWindow : Window
             // a) Bot may only start when an active room is present
             if (!await IsActiveRoomPresentAsync())
             {
-                AppendActivityLog("[Bot] Error - No active room detected.", LogCategory.Error);
+                AppendActivityLog("[Event] Error - No active room detected.", LogCategory.Error);
                 UpdateStatusText("No room — open a chat room first");
                 return;
             }
 
             SetBusy(true, "Starting…");
-            AppendLog("Starting bot on embedded IMVU chat…", LogCategory.Info);
+            AppendLog("Starting companion on embedded IMVU chat…", LogCategory.Info);
 
             _observerBoundUrl = null;
             _botRunning = true;
@@ -1005,7 +1012,7 @@ public partial class MainWindow : Window
             UpdateBotChrome();
             UpdatePageStatus();
             await InitialChatScan();
-            AppendActivityLog("[Bot] Started", LogCategory.Info);
+            AppendActivityLog("[Event] Started", LogCategory.Info);
         }
         catch (Exception ex)
         {
@@ -1033,7 +1040,7 @@ public partial class MainWindow : Window
         _ = StopBotCleanupAsync();
         PauseBotSessionTimer();
         UpdateBotChrome();
-        AppendActivityLog("[Bot] Stopped", LogCategory.Info);
+        AppendActivityLog("[Event] Stopped", LogCategory.Info);
         UpdatePageStatus();
     }
 
@@ -1043,9 +1050,10 @@ public partial class MainWindow : Window
         if (!_botRunning || _botUserPaused) return;
         _botUserPaused = true;
         PauseBotSessionTimer();
-        try { await SetJoinPollPausedAsync(true); } catch { }
+        // Keep the room observer running so roster + recorder stay live while paused
+        try { await SetJoinPollPausedAsync(false); } catch { }
         UpdateBotChrome();
-        AppendActivityLog("[Bot] Paused (session kept)", LogCategory.Info);
+        AppendActivityLog("[Event] Paused (session kept)", LogCategory.Info);
         UpdatePageStatus();
     }
 
@@ -1056,7 +1064,7 @@ public partial class MainWindow : Window
 
         if (!await IsActiveRoomPresentAsync())
         {
-            AppendActivityLog("[Bot] Cannot resume — no active room.", LogCategory.Warning);
+            AppendActivityLog("[Event] Cannot resume — no active room.", LogCategory.Warning);
             return;
         }
 
@@ -1065,8 +1073,7 @@ public partial class MainWindow : Window
         ResumeBotSessionTimer();
         try
         {
-            try { await SetJoinPollPausedAsync(false); } catch { }
-            // Observer may still be running if only user-paused without leaving room
+            // Observer stays up while in a room (roster + recorder)
             if (string.IsNullOrEmpty(_observerBoundUrl))
             {
                 await SetupChatObserver();
@@ -1077,7 +1084,7 @@ public partial class MainWindow : Window
             AppendLog("Resume: " + ex.Message, LogCategory.Warning);
         }
         UpdateBotChrome();
-        AppendActivityLog("[Bot] Resumed", LogCategory.Info);
+        AppendActivityLog("[Event] Resumed", LogCategory.Info);
         UpdatePageStatus();
     }
 
@@ -1088,7 +1095,7 @@ public partial class MainWindow : Window
 
         if (!_botRunning)
         {
-            BotToggleBtn.Content = "Start Bot";
+            BotToggleBtn.Content = "Start";
             if (BotPauseBtn != null) BotPauseBtn.Visibility = Visibility.Collapsed;
             UpdateBotGlowTarget(BotToggleBtn, active: false);
             return;
@@ -1104,7 +1111,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            BotToggleBtn.Content = "Stop Bot";
+            BotToggleBtn.Content = "Stop";
             // Glow on main Start/Stop while actively running
             UpdateBotGlowTarget(BotToggleBtn, active: true);
         }
@@ -1112,10 +1119,16 @@ public partial class MainWindow : Window
 
     private async Task StopBotCleanupAsync()
     {
+        try { await ForceDismissWhisperUiAsync(); } catch { }
+        if (_inActiveRoom)
+        {
+            try { await SetJoinPollPausedAsync(false); } catch { }
+            return;
+        }
         try { await SetJoinPollPausedAsync(true); } catch { }
         try { await TeardownChatObserverWebView(); } catch { }
-        try { await ForceDismissWhisperUiAsync(); } catch { }
         try { await SetJoinPollPausedAsync(false); } catch { }
+        _observerBoundUrl = null;
     }
 
     /// <summary>
@@ -1125,17 +1138,20 @@ public partial class MainWindow : Window
     {
         if (!_botRunning || _botPausedNoRoom) return;
         _botPausedNoRoom = true;
+        _inActiveRoom = false;
+        ClearRoomRoster();
         PauseBotSessionTimer();
         try { await SetJoinPollPausedAsync(true); } catch { }
         try { await TeardownChatObserverWebView(); } catch { }
+        _observerBoundUrl = null;
         // Room leave while user-paused: keep user-pause UI; else show as auto-pause on main chrome
         if (!_botUserPaused)
         {
             // Treat like pause for chrome: Resume path via room return; Pause square stays, glow on pause-ish
-            if (BotToggleBtn != null) BotToggleBtn.Content = "Stop Bot";
+            if (BotToggleBtn != null) BotToggleBtn.Content = "Stop";
             UpdateBotGlowTarget(BotToggleBtn, active: false);
         }
-        AppendActivityLog("[Bot] Paused — left room (timer paused, session kept)", LogCategory.Info);
+        AppendActivityLog("[Event] Paused — left room (timer paused, session kept)", LogCategory.Info);
         UpdatePageStatus();
     }
 
@@ -1152,7 +1168,7 @@ public partial class MainWindow : Window
         // Stay paused if user explicitly paused
         if (_botUserPaused)
         {
-            AppendActivityLog("[Bot] Room back — still user-paused (press Resume)", LogCategory.Info);
+            AppendActivityLog("[Event] Room back — still user-paused (press Resume)", LogCategory.Info);
             UpdatePageStatus();
             return;
         }
@@ -1169,23 +1185,12 @@ public partial class MainWindow : Window
             AppendLog("Resume observer: " + ex.Message, LogCategory.Warning);
         }
         UpdateBotChrome();
-        AppendActivityLog("[Bot] Resumed — room detected", LogCategory.Info);
+        AppendActivityLog("[Event] Resumed — room detected", LogCategory.Info);
         UpdatePageStatus();
     }
 
-    private async Task CheckRoomPresenceWhileBotRunningAsync()
-    {
-        if (!_botRunning || !IsWebViewReady || _isShuttingDown) return;
-        // Throttle: every ~2s
-        if ((DateTime.UtcNow - _lastRoomCheckUtc).TotalSeconds < 2) return;
-        _lastRoomCheckUtc = DateTime.UtcNow;
-
-        bool room = await IsActiveRoomPresentAsync();
-        if (!room && !_botPausedNoRoom)
-            await PauseBotForMissingRoomAsync();
-        else if (room && _botPausedNoRoom)
-            await ResumeBotAfterRoomAsync();
-    }
+    private async Task CheckRoomPresenceWhileBotRunningAsync() =>
+        await CheckRoomPresenceAsync();
 
     private CancellationToken BotCancellationToken =>
         _botCts?.Token ?? CancellationToken.None;
@@ -1464,8 +1469,17 @@ public partial class MainWindow : Window
     private void UpdateWelcomeNotGreetingHint()
     {
         if (WelcomeNotGreetingHint == null) return;
-        bool none = !_welcome1Enabled && !_welcome2Enabled;
-        WelcomeNotGreetingHint.Visibility = none ? Visibility.Visible : Visibility.Collapsed;
+        if (_welcome1Enabled)
+        {
+            WelcomeNotGreetingHint.Text = "...Greeting";
+            WelcomeNotGreetingHint.Foreground = HeaderActiveGreen;
+        }
+        else
+        {
+            WelcomeNotGreetingHint.Text = "...is Not Greeting";
+            WelcomeNotGreetingHint.Foreground = HeaderInactiveRed;
+        }
+        WelcomeNotGreetingHint.Visibility = Visibility.Visible;
         LayoutWelcomeHeader();
     }
 
@@ -2095,7 +2109,17 @@ public partial class MainWindow : Window
     private void UpdateBotNotListeningHint()
     {
         if (BotNotListeningHint == null) return;
-        BotNotListeningHint.Visibility = _listenToChat ? Visibility.Collapsed : Visibility.Visible;
+        if (_listenToChat)
+        {
+            BotNotListeningHint.Text = "...Listening";
+            BotNotListeningHint.Foreground = HeaderActiveGreen;
+        }
+        else
+        {
+            BotNotListeningHint.Text = "...is Not Listening";
+            BotNotListeningHint.Foreground = HeaderInactiveRed;
+        }
+        BotNotListeningHint.Visibility = Visibility.Visible;
         LayoutBotSettingsHeader();
     }
 
@@ -2404,18 +2428,18 @@ public partial class MainWindow : Window
             EnsureSettingsForAllCategories();
             _commandsReady = true;
             SaveCommands();
-            AppendLog("Bot Settings: first run — sample commands written to %LOCALAPPDATA%\\IMVUCompanion\\commands.json", LogCategory.Info);
+            AppendLog("Trigger Settings: first run — sample commands written to %LOCALAPPDATA%\\IMVUCompanion\\commands.json", LogCategory.Info);
         }
         else
         {
             EnsureSettingsForAllCategories();
             int total = CountAllCommandsAcrossLanguages();
-            AppendLog($"Bot Settings loaded (schema v{(needsMigrateSave ? 1 : 2)} → {CommandsSchemaVersion}, {total} command(s), {_commandCategories.Count} categor(ies))", LogCategory.Info);
+            AppendLog($"Trigger Settings loaded (schema v{(needsMigrateSave ? 1 : 2)} → {CommandsSchemaVersion}, {total} command(s), {_commandCategories.Count} categor(ies))", LogCategory.Info);
             if (needsMigrateSave)
             {
                 _commandsReady = true;
                 SaveCommands();
-                AppendLog("Bot Settings migrated commands.json to schema v2.", LogCategory.Info);
+                AppendLog("Trigger Settings migrated commands.json to schema v2.", LogCategory.Info);
             }
         }
 
@@ -3728,9 +3752,6 @@ public partial class MainWindow : Window
 
     private async Task HandleJoinGreetAsync(string joiner, string whisperRowRef, string joinUserId = "", CancellationToken ct = default)
     {
-        string uidLabel = string.IsNullOrWhiteSpace(joinUserId) ? "?" : joinUserId;
-        AppendActivityLog($"[JOIN] uId={uidLabel}: {joiner} | Joined the chat", LogCategory.Join);
-
         if (!string.IsNullOrWhiteSpace(joinUserId))
             _uidDisplayNames[joinUserId] = joiner;
 
@@ -3757,10 +3778,7 @@ public partial class MainWindow : Window
         }
 
         if (!_welcome1Enabled && !_welcome2Enabled)
-        {
-            AppendActivityLog($"[JOIN] not greeting — {joiner}", LogCategory.Skipped);
             return;
-        }
 
         // Message 1 (Greet checkbox)
         if (_welcome1Enabled)
@@ -3812,7 +3830,7 @@ public partial class MainWindow : Window
 
     private async Task<string?> SendToImvuChat(string t, bool whisperReply = false, string whisperRowRef = "",
         string? whisperSpeaker = null, string? whisperCmd = null, bool proactiveWhisperToUser = false,
-        string? joinUserId = null, bool requireBotActive = true, CancellationToken ct = default)
+        string? joinUserId = null, bool requireBotActive = true, bool logSend = true, CancellationToken ct = default)
     {
         if (!IsWebViewReady)
         {
@@ -3828,7 +3846,7 @@ public partial class MainWindow : Window
         try
         {
             if (requireBotActive && !IsBotActive) return "bot-stopped";
-            string? result = await SendToImvuChatViaWebView(t, whisperReply, whisperRowRef, whisperSpeaker, whisperCmd, proactiveWhisperToUser, joinUserId, ct);
+            string? result = await SendToImvuChatViaWebView(t, whisperReply, whisperRowRef, whisperSpeaker, whisperCmd, proactiveWhisperToUser, joinUserId, logSend, ct);
             if (whisperReply && result != "ok")
             {
                 AppendLog("Whisper send issue: " + (result ?? "unknown"), LogCategory.Warning);
@@ -4356,7 +4374,9 @@ return results.slice(-maxLines);
         _isShuttingDown = true;
         try
         {
-            AppendLog(reason + " — stopping bot and leaving room…", LogCategory.Info);
+            try { SaveRecorderSettings(); } catch { }
+            try { SaveDmMessages(); } catch { }
+            AppendLog(reason + " — stopping companion and leaving room…", LogCategory.Info);
             if (_botRunning)
                 StopBot();
 
@@ -4431,8 +4451,8 @@ return results.slice(-maxLines);
                 ActivityLogHeight = ActivityLogRow?.ActualHeight ?? 0,
                 WelcomeExpanded = WelcomeSettingsExpander?.IsExpanded == true,
                 BotSettingsExpanded = BotSettingsExpander?.IsExpanded == true,
-                AiSettingsExpanded = AiSettingsExpander?.IsExpanded == true,
-                AiProvidersExpanded = AiProvidersExpander?.IsExpanded == true,
+                AiSettingsExpanded = false,
+                AiProvidersExpanded = false,
             };
 
             File.WriteAllText(UiLayoutFile, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
@@ -4491,8 +4511,9 @@ return results.slice(-maxLines);
             {
                 if (WelcomeSettingsExpander != null) WelcomeSettingsExpander.IsExpanded = state.WelcomeExpanded;
                 if (BotSettingsExpander != null) BotSettingsExpander.IsExpanded = state.BotSettingsExpanded;
-                if (AiSettingsExpander != null) AiSettingsExpander.IsExpanded = state.AiSettingsExpanded;
-                if (AiProvidersExpander != null) AiProvidersExpander.IsExpanded = state.AiProvidersExpanded;
+                if (AiSettingsExpander != null) AiSettingsExpander.IsExpanded = false;
+                if (AiProvidersExpander != null) AiProvidersExpander.IsExpanded = false;
+                if (RecorderExpander != null) RecorderExpander.IsExpanded = false;
             }
         }
         catch

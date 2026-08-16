@@ -46,7 +46,7 @@ public partial class MainWindow
             _webViewReady = true;
             core.Navigate(ImvuHomeUrl);
             UpdatePageStatus();
-            AppendLog("IMVU loaded inside app. Log in, open your chat room, then Start Bot.", LogCategory.Info);
+            AppendLog("IMVU loaded inside app. Log in, open your chat room, then Start.", LogCategory.Info);
         }
         catch (Exception ex)
         {
@@ -62,8 +62,8 @@ public partial class MainWindow
         {
             UpdatePageStatus();
             // Navigation (Home / Chat / Reload / leave) may drop the room — re-check presence
-            if (_botRunning && IsWebViewReady)
-                await CheckRoomPresenceWhileBotRunningAsync();
+            if (IsWebViewReady)
+                await CheckRoomPresenceAsync();
         });
     }
 
@@ -81,7 +81,18 @@ public partial class MainWindow
             string joinUserId = parts.Length > 4 ? parts[4] : "";
             Dispatcher.BeginInvoke(() =>
             {
-                // Only process while bot is active in a live room (paused-no-room skips)
+                string kind = parts.Length > 2 ? parts[2] : "0";
+                bool recordedWhisper = isWhisper ||
+                    (string.Equals(kind, "chat", StringComparison.OrdinalIgnoreCase) &&
+                     parts.Length > 3 && parts[3] == "1");
+                HandleRoomChatEvent(sp, txt, kind, joinUserId, recordedWhisper);
+
+                bool isRoomMeta = string.Equals(kind, "leave", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(kind, "present", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(kind, "chat", StringComparison.OrdinalIgnoreCase);
+                if (isRoomMeta) return;
+
+                // Greeting / triggers only while companion is active in a live room
                 if (!IsBotActive) return;
                 EnqueueChatLine(sp, txt, isWhisper, whisperRowRef, joinUserId);
             });
@@ -114,16 +125,16 @@ public partial class MainWindow
 
         string state;
         if (_botRunning && _botPausedNoRoom)
-            state = "Bot PAUSED (no room)";
+            state = "PAUSED (no room)";
         else if (_botRunning)
-            state = "Bot RUNNING";
+            state = "RUNNING";
         else
             state = "Ready";
 
         bool urlChat = url.Contains("/chat", StringComparison.OrdinalIgnoreCase) ||
                        url.Contains("room", StringComparison.OrdinalIgnoreCase);
         UpdateStatusText(urlChat
-            ? $"{state} | Chat URL — Start Bot needs active room UI"
+            ? $"{state} | Chat URL — Start needs active room UI"
             : $"{state} | Open a chat room on the left");
     }
 

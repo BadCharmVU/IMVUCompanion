@@ -200,7 +200,7 @@ if (form && form.requestSubmit) form.requestSubmit();
 
     private async Task<string?> SendToImvuChatViaWebView(string text, bool whisperReply = false, string? whisperRowRef = null,
         string? whisperSpeaker = null, string? whisperCmd = null, bool proactiveWhisperToUser = false,
-        string? joinUserId = null, CancellationToken ct = default)
+        string? joinUserId = null, bool logSend = true, CancellationToken ct = default)
     {
         if (!IsWebViewReady) return null;
         ct.ThrowIfCancellationRequested();
@@ -209,7 +209,8 @@ if (form && form.requestSubmit) form.requestSubmit();
         {
             await EnsurePublicChatModeAsync();
             await RunPublicChatSendJsAsync(text);
-            AppendActivityLog($"[Sent] {text}", LogCategory.Sent);
+            if (logSend)
+                AppendActivityLog($"[Sent] {text}", LogCategory.Sent);
             return "ok";
         }
 
@@ -255,7 +256,8 @@ return silentWhisperStart({{escapedUid}}, {{escapedText}}, {{escapedName}});
 
                 if (result == "ok" || (result != null && result.StartsWith("ok", StringComparison.Ordinal)))
                 {
-                    AppendActivityLog($"[Whisper] {whisperSpeaker ?? joinUserId} {text}", LogCategory.Whisper);
+                    if (logSend)
+                        AppendActivityLog($"[Whisper] {whisperSpeaker ?? joinUserId} {text}", LogCategory.Whisper);
                     return "ok";
                 }
 
@@ -305,11 +307,11 @@ return 'clicked';
 
         await Task.Delay(700);
         await RunPublicChatSendJsAsync(text);
-        await FinishWhisperSendAsync(whisperSpeaker ?? "?", text);
+        await FinishWhisperSendAsync(whisperSpeaker ?? "?", text, logSend);
         return "ok";
     }
 
-    private async Task FinishWhisperSendAsync(string targetName, string message)
+    private async Task FinishWhisperSendAsync(string targetName, string message, bool logSend = true)
     {
         await Task.Delay(400);
         string? close1 = await ExitWhisperModeAsync();
@@ -317,7 +319,8 @@ return 'clicked';
         string? close2 = await ExitWhisperModeAsync();
         if (close1 != "closed" && close2 != "closed")
             AppendLog("Whisper panel may still be open (" + (close2 ?? close1 ?? "?") + ")", LogCategory.Warning);
-        AppendActivityLog($"[Whisper] {targetName} {message}", LogCategory.Whisper);
+        if (logSend)
+            AppendActivityLog($"[Whisper] {targetName} {message}", LogCategory.Whisper);
     }
 
 

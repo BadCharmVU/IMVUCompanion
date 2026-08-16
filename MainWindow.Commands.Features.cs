@@ -761,7 +761,7 @@ public partial class MainWindow
         string path = files[0];
         if (!path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
         {
-            ShowBotSettingsError("Import", "Drop a .json Bot Settings export file.");
+            ShowBotSettingsError("Import", "Drop a .json Trigger Settings export file.");
             return;
         }
         if (ImportFilePathText != null)
