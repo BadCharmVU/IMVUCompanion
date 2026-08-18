@@ -1,6 +1,6 @@
 {
     "version":  "0.9.92",
     "downloadUrl":  "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.92/IMVUCompanion-Setup-v0.9.92.exe",
-    "sha256":  "",
+    "sha256":  "9f373990a0474ee03d4d8286a1a4fc713fe81ed9222832fea5de07cea8731713",
     "releaseNotes":  "v0.9.92\n\nRoom roster\n- Live list of people in the room, kept in join order\n- Message someone in public chat or whisper from the list\n- Remove User from the room (host action, not Kick)\n- Rejoins always return to the list and Activity Log, with a visit count\n\nWelcome and layout\n- Header shows when only the second welcome message is on\n- Section open/closed state is remembered more reliably\n\nAlso\n- Activity Log no longer repeats old leave lines\n- Greeting still greets once; the live list is no longer tied to that skip"
 }
