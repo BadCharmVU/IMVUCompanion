@@ -57,7 +57,7 @@ internal static class AppVersion
         get
         {
             var v = Assembly.GetExecutingAssembly().GetName().Version;
-            return v ?? new Version(0, 9, 9);
+            return v ?? new Version(0, 9, 92);
         }
     }
 

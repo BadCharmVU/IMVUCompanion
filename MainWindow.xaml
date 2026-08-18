@@ -492,6 +492,80 @@
             </Setter>
         </Style>
 
+        <!-- Same 20x20 letter chip as recorder P / W -->
+        <Style x:Key="RoomUserRemoveBtn" TargetType="Button">
+            <Setter Property="Width" Value="20"/>
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="MinWidth" Value="20"/>
+            <Setter Property="MinHeight" Value="20"/>
+            <Setter Property="MaxWidth" Value="20"/>
+            <Setter Property="MaxHeight" Value="20"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#E0E0FF"/>
+            <Setter Property="Background" Value="#B83333"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="RemoveBd" Width="20" Height="20"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="RemoveBd" Property="Background" Value="#F87171"/>
+                                <Setter Property="Foreground" Value="#0F0F1C"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="RoomUserMessageBtn" TargetType="Button">
+            <Setter Property="Width" Value="20"/>
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="MinWidth" Value="20"/>
+            <Setter Property="MinHeight" Value="20"/>
+            <Setter Property="MaxWidth" Value="20"/>
+            <Setter Property="MaxHeight" Value="20"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="Foreground" Value="#E0E0FF"/>
+            <Setter Property="Background" Value="#3D6FD4"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="MsgBd" Width="20" Height="20"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4">
+                            <Viewbox Width="12" Height="12" Stretch="Uniform">
+                                <Path Fill="{TemplateBinding Foreground}"
+                                      Data="M2.4,1.8 H13.6 A1.8,1.8 0 0 1 15.4,3.6 V10.2 A1.8,1.8 0 0 1 13.6,12 H7.2 L3.2,15.2 V12 H2.4 A1.8,1.8 0 0 1 0.6,10.2 V3.6 A1.8,1.8 0 0 1 2.4,1.8 Z"/>
+                            </Viewbox>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="MsgBd" Property="Background" Value="#7DD3FC"/>
+                                <Setter Property="Foreground" Value="#0F0F1C"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="RecorderUserExpander" TargetType="Expander">
             <Setter Property="Background" Value="#141428"/>
             <Setter Property="Foreground" Value="#E0E0FF"/>
@@ -952,7 +1026,9 @@
                     <Expander x:Name="WelcomeSettingsExpander" Style="{StaticResource SectionExpander}"
                               IsExpanded="False" Margin="0,0,0,6"
                               Loaded="WelcomeSettingsExpander_Layout"
-                              SizeChanged="WelcomeSettingsExpander_SizeChanged">
+                              SizeChanged="WelcomeSettingsExpander_SizeChanged"
+                              Expanded="SectionExpander_ExpandedChanged"
+                              Collapsed="SectionExpander_ExpandedChanged">
                         <Expander.Header>
                             <Grid x:Name="WelcomeHeaderRoot" HorizontalAlignment="Stretch" MinWidth="160">
                                 <Grid.ColumnDefinitions>
@@ -963,11 +1039,13 @@
                                            Foreground="#E8E8FF" FontSize="14" FontWeight="SemiBold"
                                            VerticalAlignment="Center" HorizontalAlignment="Left"/>
                                     <TextBlock x:Name="WelcomeNotGreetingHint" Grid.Column="1"
-                                               Text="...is Not Greeting"
-                                               Foreground="#FF5555" FontWeight="Normal"
+                                               FontWeight="Normal"
                                                HorizontalAlignment="Right" TextAlignment="Right"
                                                VerticalAlignment="Center"
-                                               Margin="8,0,14,0"/>
+                                               Margin="8,0,14,0">
+                                        <Run x:Name="WelcomeHintMain" Text="...is Not Greeting" Foreground="#FF5555"/>
+                                        <Run x:Name="WelcomeHintTalking" Text="" Foreground="#4ADE80"/>
+                                    </TextBlock>
                             </Grid>
                         </Expander.Header>
                         <!-- Same column as header title: tip + box left-align with "Welcome Settings" text -->
@@ -1075,7 +1153,9 @@
                     <Expander x:Name="BotSettingsExpander" Style="{StaticResource SectionExpander}"
                               IsExpanded="False" Margin="0,0,0,6"
                               Loaded="BotSettingsExpander_Layout"
-                              SizeChanged="BotSettingsExpander_SizeChanged">
+                              SizeChanged="BotSettingsExpander_SizeChanged"
+                              Expanded="SectionExpander_ExpandedChanged"
+                              Collapsed="SectionExpander_ExpandedChanged">
                         <Expander.Header>
                             <Grid x:Name="BotSettingsHeaderRoot" HorizontalAlignment="Stretch" MinWidth="160">
                                 <Grid.ColumnDefinitions>
@@ -1622,7 +1702,9 @@
                     <Expander x:Name="RecorderExpander" Style="{StaticResource SectionExpander}"
                               IsExpanded="False" Margin="0,0,0,6"
                               Loaded="RecorderExpander_Layout"
-                              SizeChanged="RecorderExpander_SizeChanged">
+                              SizeChanged="RecorderExpander_SizeChanged"
+                              Expanded="SectionExpander_ExpandedChanged"
+                              Collapsed="SectionExpander_ExpandedChanged">
                         <Expander.Header>
                             <Grid x:Name="RecorderHeaderRoot" HorizontalAlignment="Stretch" MinWidth="160">
                                 <Grid.ColumnDefinitions>
@@ -1709,7 +1791,9 @@
                     <Expander x:Name="DmSettingsExpander" Style="{StaticResource SectionExpander}"
                               IsExpanded="False" Margin="0,0,0,6"
                               Loaded="DmSettingsExpander_Layout"
-                              SizeChanged="DmSettingsExpander_SizeChanged">
+                              SizeChanged="DmSettingsExpander_SizeChanged"
+                              Expanded="SectionExpander_ExpandedChanged"
+                              Collapsed="SectionExpander_ExpandedChanged">
                         <Expander.Header>
                             <Grid x:Name="DmSettingsHeaderRoot" HorizontalAlignment="Stretch" MinWidth="160">
                                 <TextBlock Text="DM Settings"
@@ -1800,6 +1884,62 @@
                                                 HorizontalAlignment="Right" Width="90"
                                                 Style="{StaticResource Win11Button}"
                                                 Click="DmEditDone_Click"/>
+                                    </StackPanel>
+                                </Border>
+                            </Border>
+
+                            <Border x:Name="RoomUserMessageModal" Visibility="Collapsed"
+                                    Background="#E012121F" CornerRadius="6" Panel.ZIndex="21">
+                                <Border Background="#252540" BorderBrush="#404060" BorderThickness="1"
+                                        CornerRadius="14" Padding="16" Margin="8"
+                                        VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,10">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="RoomUserMessageTitle" Text="Message to"
+                                                       FontSize="14" FontWeight="SemiBold"
+                                                       Foreground="#E8E8FF" VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                            <ComboBox x:Name="RoomUserMessageModeCombo" Grid.Column="1"
+                                                      Height="26" MinWidth="132" Margin="10,0,0,0"
+                                                      VerticalAlignment="Center"
+                                                      SelectionChanged="RoomUserMessageMode_Changed">
+                                                <ComboBoxItem Content="Public" Tag="public" IsSelected="True"/>
+                                                <ComboBoxItem Content="Whisper" Tag="whisper"/>
+                                                <ComboBoxItem Content="Direct (DM)" Tag="dm" Foreground="#6A6A88"/>
+                                            </ComboBox>
+                                        </Grid>
+                                        <TextBox x:Name="RoomUserMessageBox" Style="{StaticResource GrowingReplyTextBox}"
+                                                 Margin="0,0,0,4"
+                                                 Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
+                                                 PreviewMouseWheel="NestedControl_PreviewMouseWheel"
+                                                 TextChanged="RoomUserMessageBox_TextChanged"/>
+                                        <Grid Margin="0,0,0,10" MinHeight="22">
+                                            <CheckBox x:Name="RoomUserMessagePrefixCheck"
+                                                      Style="{StaticResource CompanionCheckBox}"
+                                                      Content="Prefix userName"
+                                                      HorizontalAlignment="Left" VerticalAlignment="Center"
+                                                      IsChecked="True"
+                                                      Checked="RoomUserMessagePrefix_Changed"
+                                                      Unchecked="RoomUserMessagePrefix_Changed"/>
+                                            <TextBlock x:Name="RoomUserMessageCount" Text="0/1024"
+                                                       FontSize="10" Foreground="#8080A8"
+                                                       HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                       Visibility="Hidden"/>
+                                        </Grid>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                            <Button x:Name="RoomUserMessageCancelBtn" Content="Cancel"
+                                                    Width="118" Height="28" Margin="0,0,8,0"
+                                                    Style="{StaticResource Win11Button}"
+                                                    Click="RoomUserMessageCancel_Click"/>
+                                            <Button x:Name="RoomUserMessageSendBtn" Content="Send Public"
+                                                    Width="118" Height="28"
+                                                    Style="{StaticResource Win11Button}"
+                                                    Click="RoomUserMessageSend_Click"/>
+                                        </StackPanel>
                                     </StackPanel>
                                 </Border>
                             </Border>

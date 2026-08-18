@@ -65,9 +65,11 @@ public partial class MainWindow
     private bool _dmReady;
     private bool _dmUiSyncing;
     private bool _dmAsWhisper;
+    private bool _chipMessagePrefix = true;
     private string _recorderTrigger = "RMsg";
     private string? _selectedRoomUserKey;
     private readonly List<RoomUserVm> _roomUsers = new();
+    private readonly Dictionary<string, int> _roomEnterCounts = new(StringComparer.Ordinal);
     private readonly ObservableCollection<RecorderUserVm> _recorderUsers = new();
     private readonly ObservableCollection<DmMessageEntry> _dmMessages = new();
     private readonly Dictionary<string, RecorderUserVm> _recorderByName =
@@ -79,6 +81,16 @@ public partial class MainWindow
     private string _selfDetectedUid = "";
     private string? _recorderSelectedMessageId;
     private readonly List<RecorderRowChrome> _recorderRows = new();
+    private RoomUserVm? _chipMessageUser;
+    private readonly List<PendingRemove> _pendingRemoves = new();
+
+    private sealed class PendingRemove
+    {
+        public string Name { get; init; } = "";
+        public string Uid { get; init; } = "";
+        public DateTime Utc { get; init; } = DateTime.UtcNow;
+        public bool Logged { get; set; }
+    }
 
     private sealed class RecorderRowChrome
     {
@@ -105,8 +117,6 @@ public partial class MainWindow
         RefreshDmMessageCombo();
         UpdateDmSendButton();
         RefreshRoomUsersUi();
-        if (RecorderExpander != null)
-            RecorderExpander.IsExpanded = false;
         UpdateWelcomeNotGreetingHint();
         UpdateBotNotListeningHint();
     }
@@ -669,6 +679,12 @@ public partial class MainWindow
                          string.Equals(del.GetString(), "whisper", StringComparison.OrdinalIgnoreCase))
                     _dmAsWhisper = true;
 
+                if (root.TryGetProperty("prefixUserName", out var px) &&
+                    (px.ValueKind == JsonValueKind.True || px.ValueKind == JsonValueKind.False))
+                    _chipMessagePrefix = px.GetBoolean();
+                else
+                    _chipMessagePrefix = true;
+
                 if (root.TryGetProperty("messages", out var arr) &&
                     arr.ValueKind == JsonValueKind.Array)
                 {
@@ -710,6 +726,7 @@ public partial class MainWindow
             {
                 asWhisper = _dmAsWhisper,
                 delivery = _dmAsWhisper ? "whisper" : "public",
+                prefixUserName = _chipMessagePrefix,
                 messages = _dmMessages.Select(m => new { text = m.Text }).ToList()
             };
             File.WriteAllText(DmMessagesFile, JsonSerializer.Serialize(payload,
@@ -862,6 +879,7 @@ public partial class MainWindow
         }
         else
         {
+            body = PrefixPublicDm(user.Name, body);
             result = await SendToImvuChat(body, requireBotActive: false, logSend: false);
             if (result == "ok")
                 AppendActivityLog($"[P.DM] {user.Name} {body}", LogCategory.PublicDm);
@@ -876,7 +894,7 @@ public partial class MainWindow
         return _roomUsers.FirstOrDefault(u => u.Key == _selectedRoomUserKey);
     }
 
-    private bool IsSelfName(string name)
+    private bool IsSelfName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return false;
         string fold = FoldImvuName(name);
@@ -948,56 +966,141 @@ public partial class MainWindow
         catch { }
     }
 
-    private static string RoomUserKey(string name) => FoldImvuName(name);
-
-    private void AddOrUpdateRoomUser(string name, string? userId)
+    private static string RoomUserKey(string name, string? userId)
     {
-        name = SanitizeJoinerName(name);
-        if (string.IsNullOrWhiteSpace(name) || IsSelfName(name) || IsSelfUserId(userId)) return;
-        string key = RoomUserKey(name);
-        if (string.IsNullOrEmpty(key)) return;
+        if (!string.IsNullOrWhiteSpace(userId))
+            return "uid:" + userId.Trim();
+        return FoldImvuName(name);
+    }
 
-        var existing = _roomUsers.FirstOrDefault(u => u.Key == key);
+    private static bool IsInvisibleRoomName(string? name) => IsLayoutWhitespaceOnly(name);
+
+    private bool AddOrUpdateRoomUser(string name, string? userId)
+    {
+        string uid = (userId ?? "").Trim();
+        string display = SanitizeJoinerName(name);
+        if (IsInvisibleRoomName(display))
+        {
+            if (string.IsNullOrEmpty(uid)) return false;
+            display = uid;
+        }
+        if (IsSelfUserId(uid) || IsSelfName(display) || IsSelfName(name))
+        {
+            RememberSelfIdentity(name, uid);
+            return false;
+        }
+
+        string key = RoomUserKey(display, uid);
+        if (string.IsNullOrEmpty(key)) return false;
+
+        string nameFold = FoldImvuName(display);
+        var existing = _roomUsers.FirstOrDefault(u =>
+            u.Key == key ||
+            (!string.IsNullOrEmpty(uid) && u.UserId == uid) ||
+            (!string.IsNullOrEmpty(nameFold) && FoldImvuName(u.Name) == nameFold));
+        ForgetPendingRemove(display, uid);
         if (existing == null)
         {
             _roomUsers.Add(new RoomUserVm
             {
-                Name = name,
-                UserId = userId?.Trim() ?? "",
+                Name = display,
+                UserId = uid,
                 Key = key
             });
-            _roomUsers.Sort(static (a, b) =>
-                string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
             RefreshRoomUsersUi();
-            return;
+            return true;
         }
 
-        if (!string.IsNullOrWhiteSpace(userId) && string.IsNullOrWhiteSpace(existing.UserId))
-            existing.UserId = userId.Trim();
-        if (!string.Equals(existing.Name, name, StringComparison.Ordinal))
+        bool changed = false;
+        if (!string.IsNullOrEmpty(uid) && existing.UserId != uid)
         {
-            existing.Name = name;
-            RefreshRoomUsersUi();
+            existing.UserId = uid;
+            existing.Key = "uid:" + uid;
+            changed = true;
         }
+        if (!IsInvisibleRoomName(display) &&
+            !string.Equals(existing.Name, display, StringComparison.Ordinal))
+        {
+            existing.Name = display;
+            changed = true;
+        }
+        if (changed)
+            RefreshRoomUsersUi();
+        return false;
     }
 
-    private void RemoveRoomUser(string name)
+    private void RememberSelfIdentity(string? name, string? userId)
     {
-        string key = RoomUserKey(name);
-        if (string.IsNullOrEmpty(key)) return;
-        int removed = _roomUsers.RemoveAll(u => u.Key == key);
-        if (removed == 0) return;
-        if (_selectedRoomUserKey == key)
+        if (string.IsNullOrWhiteSpace(userId)) return;
+        if (string.Equals(_selfDetectedUid, userId.Trim(), StringComparison.Ordinal)) return;
+        _selfDetectedUid = userId.Trim();
+        PruneSelfFromRoster();
+    }
+
+    private bool RemoveRoomUser(string name, string? userId = null)
+    {
+        string uid = (userId ?? "").Trim();
+        string nameKey = RoomUserKey(SanitizeJoinerName(name), null);
+        int removed = _roomUsers.RemoveAll(u =>
+            (!string.IsNullOrEmpty(uid) && (u.UserId == uid || u.Key == "uid:" + uid)) ||
+            (!string.IsNullOrEmpty(nameKey) && u.Key == nameKey) ||
+            (!string.IsNullOrWhiteSpace(name) &&
+             string.Equals(u.Name, name.Trim(), StringComparison.OrdinalIgnoreCase)));
+        if (removed == 0) return false;
+        if (_selectedRoomUserKey != null &&
+            _roomUsers.All(u => u.Key != _selectedRoomUserKey))
             _selectedRoomUserKey = null;
         RefreshRoomUsersUi();
+        return true;
     }
 
     private void ClearRoomRoster()
     {
+        _pendingRemoves.Clear();
+        _roomEnterCounts.Clear();
         if (_roomUsers.Count == 0 && _selectedRoomUserKey == null) return;
         _roomUsers.Clear();
         _selectedRoomUserKey = null;
         RefreshRoomUsersUi();
+    }
+
+    private static string RoomEnterCountKey(string name, string? userId)
+    {
+        string uid = (userId ?? "").Trim();
+        if (!string.IsNullOrEmpty(uid))
+            return "uid:" + uid;
+        string fold = FoldImvuName(SanitizeJoinerName(name));
+        return string.IsNullOrEmpty(fold) ? "" : "name:" + fold;
+    }
+
+    private int NoteRoomEnter(string name, string? userId)
+    {
+        string key = RoomEnterCountKey(name, userId);
+        if (string.IsNullOrEmpty(key)) return 1;
+        _roomEnterCounts.TryGetValue(key, out int n);
+        n++;
+        _roomEnterCounts[key] = n;
+        return n;
+    }
+
+    private void LogRoomJoin(string name, string? userId)
+    {
+        int n = NoteRoomEnter(name, userId);
+        string uidLabel = string.IsNullOrWhiteSpace(userId) ? "?" : userId.Trim();
+        string shown = !IsInvisibleRoomName(name) ? name : uidLabel;
+        string line = $"[JOIN] uId={uidLabel}: {shown} | Joined the chat";
+        if (n > 1)
+            line += " | " + n;
+        AppendActivityLog(line, LogCategory.Join);
+    }
+
+    private static string RoomUserLabel(RoomUserVm user)
+    {
+        if (!string.IsNullOrWhiteSpace(user.Name) && !IsInvisibleRoomName(user.Name))
+            return user.Name;
+        if (!string.IsNullOrWhiteSpace(user.UserId))
+            return user.UserId;
+        return "?";
     }
 
     private void RefreshRoomUsersUi()
@@ -1007,10 +1110,19 @@ public partial class MainWindow
         foreach (var user in _roomUsers)
         {
             bool selected = user.Key == _selectedRoomUserKey;
+            var row = new Grid { Margin = new Thickness(3) };
+
+            string chipText = RoomUserLabel(user);
+            if (string.IsNullOrWhiteSpace(chipText) && !string.IsNullOrWhiteSpace(user.UserId))
+                chipText = user.UserId;
+            if (string.IsNullOrWhiteSpace(chipText))
+                chipText = "?";
+
             var btn = new Button
             {
-                Content = user.Name,
+                Content = chipText,
                 Style = TryFindResource("RoomUserChip") as Style,
+                Margin = new Thickness(0),
                 Tag = user.Key,
                 Background = selected ? RoomUserSelectedBg : RoomUserIdleBg,
                 BorderBrush = selected
@@ -1018,7 +1130,64 @@ public partial class MainWindow
                     : new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x58))
             };
             btn.Click += RoomUserChip_Click;
-            DmUsersGrid.Children.Add(btn);
+
+            var showActions = selected ? Visibility.Visible : Visibility.Collapsed;
+            var msgBtn = new Button
+            {
+                Style = TryFindResource("RoomUserMessageBtn") as Style,
+                ToolTip = "Message User",
+                Tag = user,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 28, 0),
+                Visibility = showActions
+            };
+            Panel.SetZIndex(msgBtn, 2);
+            msgBtn.PreviewMouseLeftButtonDown += RoomUserMessage_Preview;
+
+            var removeBtn = new Button
+            {
+                Content = "R",
+                Style = TryFindResource("RoomUserRemoveBtn") as Style,
+                ToolTip = "Remove User",
+                Tag = user,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 4, 0),
+                Visibility = showActions
+            };
+            Panel.SetZIndex(removeBtn, 2);
+            removeBtn.PreviewMouseLeftButtonDown += RoomUserRemove_Preview;
+
+            void FitChipActionPad()
+            {
+                double h = btn.ActualHeight;
+                if (h <= 0) return;
+                double inset = Math.Max(1, Math.Round((h - 20) / 2.0));
+                removeBtn.Margin = new Thickness(0, 0, inset, 0);
+                msgBtn.Margin = new Thickness(0, 0, inset + 20 + inset, 0);
+            }
+            btn.Loaded += (_, _) => FitChipActionPad();
+            btn.SizeChanged += (_, _) => FitChipActionPad();
+
+            row.MouseEnter += (_, _) =>
+            {
+                msgBtn.Visibility = Visibility.Visible;
+                removeBtn.Visibility = Visibility.Visible;
+            };
+            row.MouseLeave += (_, _) =>
+            {
+                if (user.Key != _selectedRoomUserKey)
+                {
+                    msgBtn.Visibility = Visibility.Collapsed;
+                    removeBtn.Visibility = Visibility.Collapsed;
+                }
+            };
+
+            row.Children.Add(btn);
+            row.Children.Add(msgBtn);
+            row.Children.Add(removeBtn);
+            DmUsersGrid.Children.Add(row);
         }
     }
 
@@ -1029,6 +1198,294 @@ public partial class MainWindow
         RefreshRoomUsersUi();
     }
 
+    private void RoomUserMessage_Preview(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is Button { Tag: RoomUserVm user })
+            OpenRoomUserMessageModal(user);
+    }
+
+    private void RoomUserRemove_Preview(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is Button btn)
+            _ = RemoveRoomUserFromRoomAsync(btn);
+    }
+
+    private void OpenRoomUserMessageModal(RoomUserVm user)
+    {
+        _chipMessageUser = user;
+        string label = RoomUserLabel(user);
+        if (RoomUserMessageTitle != null)
+            RoomUserMessageTitle.Text = "Message to " + label;
+        if (RoomUserMessageBox != null)
+            RoomUserMessageBox.Text = "";
+        if (RoomUserMessagePrefixCheck != null)
+        {
+            _dmUiSyncing = true;
+            RoomUserMessagePrefixCheck.IsChecked = _chipMessagePrefix;
+            _dmUiSyncing = false;
+        }
+        if (RoomUserMessageModeCombo != null && RoomUserMessageModeCombo.Items.Count > 0)
+            RoomUserMessageModeCombo.SelectedIndex = 0;
+        UpdateRoomUserMessageModeUi();
+        UpdateRoomUserMessageCount();
+        if (RoomUserMessageModal != null)
+            RoomUserMessageModal.Visibility = Visibility.Visible;
+    }
+
+    private void RoomUserMessageCancel_Click(object sender, RoutedEventArgs e) =>
+        CloseRoomUserMessageModal();
+
+    private void CloseRoomUserMessageModal()
+    {
+        if (RoomUserMessageModal != null)
+            RoomUserMessageModal.Visibility = Visibility.Collapsed;
+        if (RoomUserMessageBox != null)
+            RoomUserMessageBox.Text = "";
+        _chipMessageUser = null;
+    }
+
+    private void RoomUserMessagePrefix_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_dmUiSyncing || !_dmReady) return;
+        _chipMessagePrefix = RoomUserMessagePrefixCheck?.IsChecked == true;
+        SaveDmMessages();
+    }
+
+    private void RoomUserMessageBox_TextChanged(object sender, TextChangedEventArgs e) =>
+        UpdateRoomUserMessageCount();
+
+    private void UpdateRoomUserMessageCount()
+    {
+        if (RoomUserMessageCount == null) return;
+        int n = RoomUserMessageBox?.Text?.Length ?? 0;
+        if (n > 1024)
+            n = 1024;
+        RoomUserMessageCount.Text = n.ToString() + "/1024";
+    }
+
+    private string SelectedRoomUserMessageMode()
+    {
+        if (RoomUserMessageModeCombo?.SelectedItem is ComboBoxItem item && item.Tag is string tag)
+            return tag;
+        return "public";
+    }
+
+    private void RoomUserMessageMode_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_dmReady && RoomUserMessageModal == null) return;
+        UpdateRoomUserMessageModeUi();
+    }
+
+    private void UpdateRoomUserMessageModeUi()
+    {
+        string mode = SelectedRoomUserMessageMode();
+        if (RoomUserMessageCount != null)
+            RoomUserMessageCount.Visibility = mode == "dm" ? Visibility.Visible : Visibility.Hidden;
+        if (RoomUserMessageSendBtn == null) return;
+        RoomUserMessageSendBtn.Content = mode switch
+        {
+            "whisper" => "Send Whisper",
+            "dm" => "Send DM",
+            _ => "Send Public"
+        };
+        RoomUserMessageSendBtn.IsEnabled = mode != "dm";
+        RoomUserMessageSendBtn.Opacity = mode == "dm" ? 0.45 : 1;
+    }
+
+    private async void RoomUserMessageSend_Click(object sender, RoutedEventArgs e)
+    {
+        if (_chipMessageUser == null) return;
+        string mode = SelectedRoomUserMessageMode();
+        if (mode == "dm") return;
+
+        string body = RoomUserMessageBox?.Text ?? "";
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            AppendLog("Enter a message first.", LogCategory.Warning);
+            return;
+        }
+        if (!await IsActiveRoomPresentAsync())
+        {
+            AppendLog("No active room — cannot send.", LogCategory.Warning);
+            return;
+        }
+
+        var user = _chipMessageUser;
+        string? result;
+        if (mode == "whisper")
+        {
+            result = await SendToImvuChat(body, whisperReply: true, whisperSpeaker: user.Name,
+                proactiveWhisperToUser: true, joinUserId: user.UserId,
+                requireBotActive: false, logSend: false);
+            if (result == "ok")
+                AppendActivityLog($"[W.DM] {user.Name} {body}", LogCategory.WhisperDm);
+            else
+                AppendLog("Whisper failed: " + (result ?? "unknown"), LogCategory.Warning);
+        }
+        else
+        {
+            string sent = _chipMessagePrefix ? PrefixPublicDm(user.Name, body) : body;
+            result = await SendToImvuChat(sent, requireBotActive: false, logSend: false);
+            if (result == "ok")
+                AppendActivityLog($"[P.DM] {user.Name} {sent}", LogCategory.PublicDm);
+            else
+                AppendLog("Public send failed: " + (result ?? "unknown"), LogCategory.Warning);
+        }
+
+        if (result == "ok")
+            CloseRoomUserMessageModal();
+    }
+
+    private async Task RemoveRoomUserFromRoomAsync(Button btn)
+    {
+        if (btn.Tag is not RoomUserVm user)
+        {
+            AppendActivityLog("[REMOVE] ignored — no user on button", LogCategory.Warning);
+            return;
+        }
+
+        string label = RoomUserLabel(user);
+        string uid = (user.UserId ?? "").Trim();
+        if (string.IsNullOrEmpty(uid) && Regex.IsMatch(label, @"^\d{5,}$"))
+            uid = label;
+
+        if (string.IsNullOrEmpty(uid))
+        {
+            AppendActivityLog("[REMOVE] failed — no uid for " + label, LogCategory.Warning);
+            return;
+        }
+        if (IsSelfUserId(uid))
+        {
+            AppendActivityLog("[REMOVE] blocked — that is you", LogCategory.Warning);
+            return;
+        }
+        if (!IsWebViewReady)
+        {
+            AppendActivityLog("[REMOVE] failed — IMVU not ready", LogCategory.Warning);
+            return;
+        }
+
+        RememberPendingRemove(label, uid);
+
+        string uidJson = System.Text.Json.JsonSerializer.Serialize(uid);
+        string nameJson = System.Text.Json.JsonSerializer.Serialize(label);
+        string js = ImvuScripts.KickUserFull;
+        string? result;
+        try
+        {
+            string? started = await RunJsStringAsync(
+                js + $"return __imvuRemoveUserStart({uidJson}, {nameJson});",
+                logErrors: true);
+            result = started;
+            if (started == "started")
+            {
+                for (int i = 0; i < 100; i++)
+                {
+                    await Task.Delay(80);
+                    result = await RunJsStringAsync(js + "return __imvuRemoveUserPoll();", logErrors: false);
+                    if (!string.IsNullOrEmpty(result) && result != "pending" && result != "{}")
+                        break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendActivityLog("[REMOVE] error: " + ex.Message, LogCategory.Error);
+            return;
+        }
+
+        bool ok = result == "ui:confirmed"
+            || result == "bootFromChat"
+            || (result != null && result.StartsWith("imvu-http:", StringComparison.Ordinal))
+            || (result != null
+                && result.StartsWith("api:", StringComparison.Ordinal)
+                && !result.StartsWith("api-fail", StringComparison.Ordinal)
+                && !result.StartsWith("api-error", StringComparison.Ordinal));
+        if (!ok)
+        {
+            ForgetPendingRemove(label, uid);
+            AppendActivityLog("[REMOVE] failed " + label + " (" + (result ?? "null") + ")", LogCategory.Warning);
+            return;
+        }
+
+        LogRemovedOnce(label, uid, result);
+    }
+
+    private static string PrefixPublicDm(string? userName, string body)
+    {
+        string name = (userName ?? "").Trim();
+        if (string.IsNullOrEmpty(name) || IsInvisibleRoomName(name))
+            return body;
+        string prefix = name + ", ";
+        if (body.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return body;
+        return prefix + body;
+    }
+
+    private static string FormatRemoveHow(string? result)
+    {
+        if (string.IsNullOrWhiteSpace(result)) return "removed";
+        if (string.Equals(result, "bootFromChat", StringComparison.OrdinalIgnoreCase))
+            return "boot From Chat";
+        if (string.Equals(result, "ui:confirmed", StringComparison.OrdinalIgnoreCase))
+            return "Remove User";
+        if (result.StartsWith("imvu-http:", StringComparison.OrdinalIgnoreCase))
+            return "IMVU HTTP";
+        if (result.StartsWith("api:", StringComparison.OrdinalIgnoreCase))
+            return "API";
+        return result;
+    }
+
+    private void PrunePendingRemoves()
+    {
+        DateTime cutoff = DateTime.UtcNow.AddSeconds(-60);
+        _pendingRemoves.RemoveAll(p => p.Utc < cutoff);
+    }
+
+    private bool MatchesPendingRemove(PendingRemove p, string name, string uid)
+    {
+        if (!string.IsNullOrEmpty(uid) && p.Uid == uid) return true;
+        return !string.IsNullOrWhiteSpace(name) &&
+               string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RememberPendingRemove(string name, string uid)
+    {
+        PrunePendingRemoves();
+        if (_pendingRemoves.Any(p => MatchesPendingRemove(p, name, uid))) return;
+        _pendingRemoves.Add(new PendingRemove { Name = name, Uid = uid });
+    }
+
+    private void ForgetPendingRemove(string name, string uid)
+    {
+        _pendingRemoves.RemoveAll(p => MatchesPendingRemove(p, name, uid));
+    }
+
+    private bool IsPendingRemove(string name, string? userId)
+    {
+        PrunePendingRemoves();
+        string uid = (userId ?? "").Trim();
+        return _pendingRemoves.Any(p => MatchesPendingRemove(p, name, uid));
+    }
+
+    private void LogRemovedOnce(string name, string uid, string? result)
+    {
+        PrunePendingRemoves();
+        var hit = _pendingRemoves.FirstOrDefault(p => MatchesPendingRemove(p, name, uid));
+        if (hit == null)
+        {
+            hit = new PendingRemove { Name = name, Uid = uid };
+            _pendingRemoves.Add(hit);
+        }
+        if (hit.Logged) return;
+        hit.Logged = true;
+        string how = FormatRemoveHow(result);
+        string who = string.IsNullOrWhiteSpace(name) ? uid : name;
+        AppendActivityLog($"[REMOVED] {who} ({how}) uid={uid}", LogCategory.Remove);
+    }
+
     private void HandleRoomChatEvent(string speaker, string text, string kind, string joinUserId, bool isWhisper = false)
     {
         if (string.Equals(kind, "leave", StringComparison.OrdinalIgnoreCase))
@@ -1036,10 +1493,15 @@ public partial class MainWindow
             string name = SanitizeJoinerName(speaker);
             if (string.IsNullOrWhiteSpace(name) && TryParseLeaveName(text, out string parsed))
                 name = parsed;
-            if (!string.IsNullOrWhiteSpace(name))
+            if (!string.IsNullOrWhiteSpace(name) || !string.IsNullOrWhiteSpace(joinUserId))
             {
-                RemoveRoomUser(name);
-                AppendActivityLog($"[LEFT] {name} left the chat", LogCategory.Left);
+                string label = !IsInvisibleRoomName(name) ? name : (joinUserId ?? "").Trim();
+                bool pending = IsPendingRemove(name, joinUserId) || IsPendingRemove(label, joinUserId);
+                bool wasInRoom = RemoveRoomUser(name, joinUserId);
+                if (pending)
+                    return;
+                if (wasInRoom && !string.IsNullOrWhiteSpace(label))
+                    AppendActivityLog($"[LEFT] {label} left the chat", LogCategory.Left);
             }
             return;
         }
@@ -1049,19 +1511,23 @@ public partial class MainWindow
             string name = SanitizeJoinerName(speaker);
             if (string.IsNullOrWhiteSpace(name) && TryParsePresentName(text, out string parsed))
                 name = parsed;
-            if (!string.IsNullOrWhiteSpace(name))
-                AddOrUpdateRoomUser(name, joinUserId);
+            AddOrUpdateRoomUser(name, joinUserId);
             return;
         }
 
         if (ContainsJoinLine(text))
         {
-            if (TryResolveJoiner(speaker, text, out string joiner) && !string.IsNullOrWhiteSpace(joiner)
-                && !IsSelfName(joiner) && !IsSelfUserId(joinUserId))
+            TryResolveJoiner(speaker, text, out string joiner);
+            if (string.IsNullOrWhiteSpace(joiner))
+                joiner = SanitizeJoinerName(speaker);
+            if (IsSelfName(joiner) || IsSelfUserId(joinUserId))
+            {
+                RememberSelfIdentity(joiner, joinUserId);
+            }
+            else if (!string.IsNullOrWhiteSpace(joiner) || !string.IsNullOrWhiteSpace(joinUserId))
             {
                 AddOrUpdateRoomUser(joiner, joinUserId);
-                string uidLabel = string.IsNullOrWhiteSpace(joinUserId) ? "?" : joinUserId;
-                AppendActivityLog($"[JOIN] uId={uidLabel}: {joiner} | Joined the chat", LogCategory.Join);
+                LogRoomJoin(joiner, joinUserId);
             }
         }
 

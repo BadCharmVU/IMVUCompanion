@@ -35,7 +35,9 @@ public enum LogCategory
     Error,
     Left,
     PublicDm,
-    WhisperDm
+    WhisperDm,
+    Kick,
+    Remove
 }
 
 public partial class MainWindow : Window
@@ -329,6 +331,9 @@ public partial class MainWindow : Window
             if (CompanionAiTriggerBox != null)
                 CompanionAiTriggerBox.Text = _aiSettings.CompanionAiTrigger ?? "";
             InitRoomTools();
+            ApplySectionExpanderLayout();
+            Dispatcher.BeginInvoke(ApplySectionExpanderLayout, DispatcherPriority.Loaded);
+            Dispatcher.BeginInvoke(ApplySectionExpanderLayout, DispatcherPriority.ContextIdle);
 
             AppendLog($"{AppVersion.ShortLabel} — {_sessionStartedAt:MM.dd.yyyy - HH:mm:ss}", LogCategory.Info, toActivityLog: true);
             InitAutoUpdateUi();
@@ -350,6 +355,8 @@ public partial class MainWindow : Window
         LogCategory.Left => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFB, 0x71, 0x85)),
         LogCategory.PublicDm => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x7D, 0xD3, 0xFC)),
         LogCategory.WhisperDm => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xD5, 0xA5, 0x48)),
+        LogCategory.Kick => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFB, 0x71, 0x85)),
+        LogCategory.Remove => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFB, 0x71, 0x85)),
         LogCategory.Warning => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFB, 0x92, 0x3C)),
         LogCategory.Error => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xF8, 0x71, 0x71)),
         _ => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC0, 0xC0, 0xE0))
@@ -1468,18 +1475,29 @@ public partial class MainWindow : Window
 
     private void UpdateWelcomeNotGreetingHint()
     {
-        if (WelcomeNotGreetingHint == null) return;
+        if (WelcomeHintMain == null || WelcomeHintTalking == null) return;
         if (_welcome1Enabled)
         {
-            WelcomeNotGreetingHint.Text = "...Greeting";
-            WelcomeNotGreetingHint.Foreground = HeaderActiveGreen;
+            WelcomeHintMain.Text = "...Greeting";
+            WelcomeHintMain.Foreground = HeaderActiveGreen;
+            WelcomeHintTalking.Text = "";
         }
         else
         {
-            WelcomeNotGreetingHint.Text = "...is Not Greeting";
-            WelcomeNotGreetingHint.Foreground = HeaderInactiveRed;
+            WelcomeHintMain.Text = "...is Not Greeting";
+            WelcomeHintMain.Foreground = HeaderInactiveRed;
+            if (_welcome2Enabled)
+            {
+                WelcomeHintTalking.Text = ", but Talking";
+                WelcomeHintTalking.Foreground = HeaderActiveGreen;
+            }
+            else
+            {
+                WelcomeHintTalking.Text = "";
+            }
         }
-        WelcomeNotGreetingHint.Visibility = Visibility.Visible;
+        if (WelcomeNotGreetingHint != null)
+            WelcomeNotGreetingHint.Visibility = Visibility.Visible;
         LayoutWelcomeHeader();
     }
 
@@ -3470,14 +3488,26 @@ public partial class MainWindow : Window
         return s;
     }
 
+    private static readonly Regex LayoutWhitespaceRegex = new(
+        @"[\s\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\u200B-\u200D\uFEFF\u00AD\u2060\u180E]+",
+        RegexOptions.Compiled);
+
+    private static bool IsLayoutWhitespaceOnly(string? name)
+    {
+        if (string.IsNullOrEmpty(name)) return true;
+        return LayoutWhitespaceRegex.Replace(name, "").Length == 0;
+    }
+
     private static string SanitizeJoinerName(string? name)
     {
-        if (string.IsNullOrWhiteSpace(name)) return "";
-        string cleaned = Regex.Replace(name.Trim(), @"[\u200B-\u200D\uFEFF\u00AD\u2060\u180E]", "");
-        cleaned = Regex.Replace(cleaned, @"\s+", " ").Trim();
-        if (cleaned.Length < 1 || cleaned.Length > 60) return "";
+        if (name == null) return "";
+        string cleaned = Regex.Replace(name, @"[\u200B-\u200D\uFEFF\u00AD\u2060\u180E]", "");
+        cleaned = Regex.Replace(cleaned,
+            @"^[\s\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+|[\s\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]+$",
+            "");
+        if (cleaned.Length > 60) cleaned = cleaned[..60];
+        if (IsLayoutWhitespaceOnly(cleaned)) return "";
         if (IsJoinLine(cleaned)) return "";
-        if (!HasVisibleJoinerName(cleaned) && string.IsNullOrEmpty(FoldImvuName(cleaned))) return "";
         return cleaned;
     }
 
@@ -3752,28 +3782,22 @@ public partial class MainWindow : Window
 
     private async Task HandleJoinGreetAsync(string joiner, string whisperRowRef, string joinUserId = "", CancellationToken ct = default)
     {
+        if (IsSelfName(joiner) || IsSelfUserId(joinUserId))
+        {
+            RememberSelfIdentity(joiner, joinUserId);
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(joinUserId))
             _uidDisplayNames[joinUserId] = joiner;
 
         if (!string.IsNullOrWhiteSpace(joinUserId))
         {
             if (!_greetedUserIds.Add(joinUserId))
-            {
-                _joinSkipCounts.TryGetValue(joinUserId, out int count);
-                count++;
-                _joinSkipCounts[joinUserId] = count;
-                string name = _uidDisplayNames.GetValueOrDefault(joinUserId, joiner);
-                LogJoinSkipped(name, count);
                 return;
-            }
         }
         else if (!_greetedJoinersByName.Add(joiner))
         {
-            string nameKey = "name:" + joiner.ToLowerInvariant();
-            _joinSkipCounts.TryGetValue(nameKey, out int count);
-            count++;
-            _joinSkipCounts[nameKey] = count;
-            LogJoinSkipped(joiner, count);
             return;
         }
 
@@ -4413,9 +4437,18 @@ return results.slice(-maxLines);
         public double ActivityLogHeight { get; set; }
         public bool WelcomeExpanded { get; set; }
         public bool BotSettingsExpanded { get; set; }
+        public bool RecorderExpanded { get; set; }
+        public bool DmSettingsExpanded { get; set; }
         public bool AiSettingsExpanded { get; set; }
         public bool AiProvidersExpanded { get; set; }
     }
+
+    private bool _applyingExpanderLayout;
+    private bool _sectionExpanderPrefsReady;
+    private bool _welcomeExpandedPref;
+    private bool _botSettingsExpandedPref;
+    private bool _recorderExpandedPref;
+    private bool _dmSettingsExpandedPref;
 
     private void SaveUiLayout()
     {
@@ -4449,8 +4482,14 @@ return results.slice(-maxLines);
                 LeftColWidth = leftW,
                 RightColWidth = rightW,
                 ActivityLogHeight = ActivityLogRow?.ActualHeight ?? 0,
-                WelcomeExpanded = WelcomeSettingsExpander?.IsExpanded == true,
-                BotSettingsExpanded = BotSettingsExpander?.IsExpanded == true,
+                WelcomeExpanded = _sectionExpanderPrefsReady
+                    ? _welcomeExpandedPref : WelcomeSettingsExpander?.IsExpanded == true,
+                BotSettingsExpanded = _sectionExpanderPrefsReady
+                    ? _botSettingsExpandedPref : BotSettingsExpander?.IsExpanded == true,
+                RecorderExpanded = _sectionExpanderPrefsReady
+                    ? _recorderExpandedPref : RecorderExpander?.IsExpanded == true,
+                DmSettingsExpanded = _sectionExpanderPrefsReady
+                    ? _dmSettingsExpandedPref : DmSettingsExpander?.IsExpanded == true,
                 AiSettingsExpanded = false,
                 AiProvidersExpanded = false,
             };
@@ -4506,14 +4545,14 @@ return results.slice(-maxLines);
             if (state != null && ActivityLogRow != null && state.ActivityLogHeight >= 72)
                 ActivityLogRow.Height = new GridLength(state.ActivityLogHeight, GridUnitType.Pixel);
 
-            // Section expanders (open/closed remembered across restarts)
             if (state != null)
             {
-                if (WelcomeSettingsExpander != null) WelcomeSettingsExpander.IsExpanded = state.WelcomeExpanded;
-                if (BotSettingsExpander != null) BotSettingsExpander.IsExpanded = state.BotSettingsExpanded;
-                if (AiSettingsExpander != null) AiSettingsExpander.IsExpanded = false;
-                if (AiProvidersExpander != null) AiProvidersExpander.IsExpanded = false;
-                if (RecorderExpander != null) RecorderExpander.IsExpanded = false;
+                _welcomeExpandedPref = state.WelcomeExpanded;
+                _botSettingsExpandedPref = state.BotSettingsExpanded;
+                _recorderExpandedPref = state.RecorderExpanded;
+                _dmSettingsExpandedPref = state.DmSettingsExpanded;
+                _sectionExpanderPrefsReady = true;
+                ApplySectionExpanderLayout();
             }
         }
         catch
@@ -4529,6 +4568,36 @@ return results.slice(-maxLines);
             }
             catch { }
         }
+    }
+
+    private void ApplySectionExpanderLayout()
+    {
+        _applyingExpanderLayout = true;
+        try
+        {
+            if (WelcomeSettingsExpander != null) WelcomeSettingsExpander.IsExpanded = _welcomeExpandedPref;
+            if (BotSettingsExpander != null) BotSettingsExpander.IsExpanded = _botSettingsExpandedPref;
+            if (RecorderExpander != null) RecorderExpander.IsExpanded = _recorderExpandedPref;
+            if (DmSettingsExpander != null) DmSettingsExpander.IsExpanded = _dmSettingsExpandedPref;
+            if (AiSettingsExpander != null) AiSettingsExpander.IsExpanded = false;
+            if (AiProvidersExpander != null) AiProvidersExpander.IsExpanded = false;
+        }
+        finally
+        {
+            _applyingExpanderLayout = false;
+        }
+    }
+
+    private void SectionExpander_ExpandedChanged(object sender, RoutedEventArgs e)
+    {
+        if (_applyingExpanderLayout) return;
+        if (sender == WelcomeSettingsExpander) _welcomeExpandedPref = WelcomeSettingsExpander.IsExpanded;
+        else if (sender == BotSettingsExpander) _botSettingsExpandedPref = BotSettingsExpander.IsExpanded;
+        else if (sender == RecorderExpander) _recorderExpandedPref = RecorderExpander.IsExpanded;
+        else if (sender == DmSettingsExpander) _dmSettingsExpandedPref = DmSettingsExpander.IsExpanded;
+        else return;
+        _sectionExpanderPrefsReady = true;
+        SaveUiLayout();
     }
 
     [StructLayout(LayoutKind.Sequential)]

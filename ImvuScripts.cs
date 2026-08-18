@@ -20,6 +20,8 @@ internal static class ImvuScripts
     private static readonly Lazy<string> ActiveChatHookLazy = new(() => Load("active-chat-hook.js"));
     private static readonly Lazy<string> ChatObserverLazy = new(() => Load("chat-observer.js"));
     private static readonly Lazy<string> CollectJoinUidsLazy = new(() => Load("collect-join-uids.js"));
+    private static readonly Lazy<string> KickUserLazy = new(() => Load("kick-user.js"));
+    private static readonly Lazy<string> RemoveUserTraceLazy = new(() => Load("remove-user-trace.js"));
 
     public static string FindChatRoot => FindChatRootLazy.Value;
     public static string ExitWhisperMode => ExitWhisperModeLazy.Value;
@@ -28,6 +30,11 @@ internal static class ImvuScripts
     public static string ActiveChatHook => ActiveChatHookLazy.Value;
     public static string ChatObserver => ChatObserverLazy.Value;
     public static string CollectJoinUids => CollectJoinUidsLazy.Value;
+    public static string KickUser => KickUserLazy.Value;
+    public static string RemoveUserTrace => RemoveUserTraceLazy.Value;
+
+    /// <summary>Find-chat-root + whisper helpers + Remove User (not Kick).</summary>
+    public static string KickUserFull => FindChatRoot + ProactiveWhisper + KickUser;
 
     /// <summary>Find-chat-root helpers + observer body (same as former ChatObserverJs const).</summary>
     public static string ChatObserverFull => FindChatRoot + ChatObserver;

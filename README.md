@@ -2,9 +2,9 @@
 
 Windows desktop companion for **IMVU Next** chat rooms. IMVU runs inside the app (WebView2). The companion can greet joiners, answer `!commands`, record AFK notes, send notices to people in the room, and check for updates automatically.
 
-**Current release:** [v0.9.9](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
+**Current release:** [v0.9.92](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
 
-Download **`IMVUCompanion-Setup-v0.9.9.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
+Download **`IMVUCompanion-Setup-v0.9.92.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
 
 ---
 
@@ -14,7 +14,7 @@ Download **`IMVUCompanion-Setup-v0.9.9.exe`** from [Releases](https://github.com
 - **Welcome messages** when someone joins — public and/or whisper, with `{name}` placeholder
 - Second optional welcome line (public or whisper)
 - **Message Recorder Machine** — AFK notes via a custom trigger, plus incoming whispers
-- **DM Settings** — send public or whisper notices to people currently in the room
+- **DM Settings** — live room roster: message, whisper, or remove people in the room
 - **!Commands** with categories and languages (English / Russian)
 - **!bbot** AI hook (providers configurable; maintenance reply when not set up)
 - Room-aware bot: works while you are in a room; pauses cleanly when you leave
@@ -142,12 +142,12 @@ Update channel: public `version.json` gist referenced by the app (see `AppVersio
 
 ---
 
-## Recent changes (v0.9.9)
+## Recent changes (v0.9.92)
 
-- **Message Recorder Machine** — record AFK notes (trigger + incoming whispers), persist them, per-user expand, reply/delete
-- **DM Settings** — live room roster, public or whisper notices to a selected user
-- **Trigger Settings** rename (was Bot Settings); Start / Stop labels; AI sections stay visible but locked
-- **AI Settings** and **AI Providers** are **not connected yet** (still in development; UI only for now)
+- **Room roster** — live list of people in the room; message (public or whisper) or Remove User
+- Rejoins always show in the list and Activity Log, with a visit count
+- Welcome header distinguishes Greeting vs 2nd-message-only (“talking”)
+- Section open/closed state is remembered more reliably
 
 See [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases) for full notes per version.
 

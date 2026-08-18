@@ -10,8 +10,21 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
     function firstLine(t) { return (t || '').trim().split(/[\n\r]/)[0].trim(); }
     function norm(t) { return (t || '').replace(/\s+/g, ' ').trim(); }
     function hasVisibleName(name) {
-        const s = (name || '').replace(/[\u200B-\u200D\uFEFF\u00AD\u2060\u180E]/g, '').trim();
-        return /[\p{L}\p{N}]/u.test(s);
+        return !isLayoutWhitespaceOnly(name);
+    }
+    function isLayoutWhitespaceOnly(s) {
+        return !(s || '').replace(/[\s\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\u200B-\u200D\uFEFF\u00AD\u2060\u180E]/g, '').length;
+    }
+    function keepEnteredName(name) {
+        if (isLayoutWhitespaceOnly(name)) return '';
+        return (name || '').replace(/^[\s\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000\u200B-\u200D\uFEFF]+|[\s\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000\u200B-\u200D\uFEFF]+$/g, '');
+    }
+    function isBlankNameBeforePhrase(raw, phraseRx) {
+        const s = raw || '';
+        const m = s.match(phraseRx);
+        if (!m) return false;
+        const before = s.slice(0, m.index);
+        return isLayoutWhitespaceOnly(before.replace(/!/g, ''));
     }
     function isJoinText(t) {
         t = norm(t);
@@ -41,18 +54,26 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
             .filter(l => l.length >= 6 && l.length <= 100 && isJoinText(l));
     }
     function nameFromJoinLine(line) {
-        const m = norm(line).match(joinNameRx);
-        return m ? norm(m[1]) : '';
+        const m = (line || '').match(joinNameRx) || norm(line).match(joinNameRx);
+        return m ? keepEnteredName(m[1]) : '';
     }
     function parseJoinRow(row) {
         if (!row || row === cont) return null;
+        const rawLines = (row.innerText || row.textContent || '').split(/[\n\r]+/);
         const lines = joinLinesFromRow(row);
-        if (!lines.length) return null;
-        const text = lines[lines.length - 1];
-        let name = nameFromJoinLine(text);
-        if (!name) name = nameFromJoinAvatarImg(row);
-        name = norm(name);
-        if (!hasVisibleName(name) || isJoinText(name)) return null;
+        let text = lines.length ? lines[lines.length - 1] : '';
+        if (!text) {
+            for (const raw of rawLines) {
+                if (isJoinText(norm(raw)) || isBlankNameBeforePhrase(raw, /joined\s+the\s+chat|is\s+now\s+in\s+the\s+chat/i)) {
+                    text = norm(raw) || raw;
+                    break;
+                }
+            }
+        }
+        if (!text) return null;
+        let name = keepEnteredName(nameFromJoinLine(text));
+        if (!name) name = keepEnteredName(nameFromJoinAvatarImg(row));
+        if (isJoinText(name)) name = '';
         return { name, text, row };
     }
     function nameFromJoinAvatarImg(row) {
@@ -143,13 +164,21 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
     }
     function emitJoin(j) {
         if (!j || !j.row) return;
-        let name = norm(j.name);
-        if (!name) name = nameFromJoinLine(j.text);
-        if (!name) name = norm(nameFromJoinAvatarImg(j.row));
-        if (!hasVisibleName(name) || isJoinText(name)) return;
+        let name = keepEnteredName(j.name);
+        if (!name) name = keepEnteredName(nameFromJoinLine(j.text));
+        if (!name) name = keepEnteredName(nameFromJoinAvatarImg(j.row));
+        if (isJoinText(name)) name = '';
         const wrapper = getJoinRowWrapper(j.row) || j.row;
         const userId = extractUserIdFromWrapper(wrapper);
+        if (!name && !userId) return;
+        if (isSelfIdentity(name, userId, wrapper)) return;
         if (window._seenJoinRows.has(wrapper)) return;
+        if (rememberSeenUid('join', userId)) return;
+        try { if (userId && window._seenLeaveUids) window._seenLeaveUids.delete(userId); } catch (e) {}
+        try {
+            if (name && window._seenLeaveNames)
+                window._seenLeaveNames.delete(String(name).toLowerCase());
+        } catch (e) {}
         window._seenJoinRows.add(wrapper);
         let joinRef = 'j' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
         try {
@@ -170,39 +199,95 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
         const lines = systemLinesFromRow(row, pred);
         if (!lines.length) return null;
         const text = lines[lines.length - 1];
-        const m = norm(text).match(nameRx);
-        let name = m ? norm(m[1]) : '';
-        if (!name) name = nameFromJoinAvatarImg(row);
-        name = norm(name);
-        if (!hasVisibleName(name) || pred(name) || isJoinText(name)) return null;
+        const m = text.match(nameRx) || norm(text).match(nameRx);
+        let name = keepEnteredName(m ? m[1] : '');
+        if (!name) name = keepEnteredName(nameFromJoinAvatarImg(row));
+        if (pred(name) || isJoinText(name)) name = '';
         return { name, text, row };
     }
     function parseLeaveRow(row) { return parseNamedSystemRow(row, isLeaveText, leaveNameRx); }
     function parsePresentRow(row) { return parseNamedSystemRow(row, isPresentText, presentNameRx); }
-    function isSelfIdentity(name, uid) {
+    function isMyUserNode(node) {
+        let el = node;
+        for (let d = 0; el && d < 16; d++) {
+            const cls = (el.className || '').toString();
+            if (/(^|\s)my-user(\s|$)/.test(cls)) {
+                const uid = extractUserIdDeep(el);
+                if (uid) window.__imvuSelfUid = String(uid);
+                return true;
+            }
+            el = el.parentElement;
+        }
+        return false;
+    }
+    function captureMyUserUid() {
+        const roots = [];
+        try { if (cont) roots.push(cont); } catch (e) {}
+        try { roots.push(document); } catch (e) {}
+        try { if (window.top && window.top.document) roots.push(window.top.document); } catch (e) {}
+        for (const root of roots) {
+            let nodes;
+            try { nodes = root.querySelectorAll('.my-user'); } catch (e) { continue; }
+            for (const n of nodes) {
+                const uid = extractUserIdDeep(n) || extractUserIdFromNode(n);
+                if (uid) {
+                    window.__imvuSelfUid = String(uid);
+                    return uid;
+                }
+            }
+        }
+        return window.__imvuSelfUid || '';
+    }
+    function isSelfIdentity(name, uid, row) {
+        if (row && isMyUserNode(row)) return true;
         const selfUid = window.__imvuSelfUid || '';
-        const selfName = (window.__imvuSelfName || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        if (uid && selfUid && String(uid) === String(selfUid)) return true;
-        const n = (name || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        return !!(n && selfName && n === selfName);
+        return !!(uid && selfUid && String(uid) === String(selfUid));
+    }
+    function rememberSeenUid(kind, uid) {
+        if (!uid) return false;
+        const key = kind === 'leave' ? '_seenLeaveUids' : kind === 'present' ? '_seenPresentUids' : '_seenJoinUids';
+        if (!window[key]) window[key] = new Set();
+        if (window[key].has(uid)) return true;
+        window[key].add(uid);
+        return false;
     }
     function emitTyped(j, kind) {
-        if (!j || !j.row || !j.name) return;
+        if (!j || !j.row) return;
         const wrapper = getSystemRowWrapper(j.row, kind) || j.row;
         const seenKey = kind === 'leave' ? '_seenLeaveRows' : '_seenPresentRows';
         if (!window[seenKey]) window[seenKey] = new WeakSet();
         const userId = extractUserIdDeep(wrapper) || extractUserIdDeep(j.row);
+        let name = keepEnteredName(j.name);
+        if (!name && !userId) return;
         let prevUid = '';
         try { prevUid = wrapper.getAttribute('data-imvu-bot-user-id') || ''; } catch(e) {}
         if (window[seenKey].has(wrapper) && (prevUid || !userId)) return;
-        if (isSelfIdentity(j.name, userId)) return;
+        if (isSelfIdentity(name, userId, wrapper)) return;
+        if (kind === 'leave') {
+            if (rememberSeenUid('leave', userId)) return;
+            if (!userId && name) {
+                if (!window._seenLeaveNames) window._seenLeaveNames = new Set();
+                const nk = String(name).toLowerCase();
+                if (window._seenLeaveNames.has(nk)) return;
+                window._seenLeaveNames.add(nk);
+            }
+            try { if (userId && window._seenJoinUids) window._seenJoinUids.delete(userId); } catch (e) {}
+            try { if (userId && window._seenPresentUids) window._seenPresentUids.delete(userId); } catch (e) {}
+        } else {
+            if (rememberSeenUid(kind, userId)) return;
+            try { if (userId && window._seenLeaveUids) window._seenLeaveUids.delete(userId); } catch (e) {}
+            try {
+                if (name && window._seenLeaveNames)
+                    window._seenLeaveNames.delete(String(name).toLowerCase());
+            } catch (e) {}
+        }
         window[seenKey].add(wrapper);
         let rowRef = kind.charAt(0) + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
         try {
             wrapper.setAttribute('data-imvu-bot-' + kind, rowRef);
             if (userId) wrapper.setAttribute('data-imvu-bot-user-id', userId);
         } catch(e) {}
-        post(j.name + "\t" + j.text + "\t" + kind + "\t" + rowRef + "\t" + (userId || ''));
+        post(name + "\t" + j.text + "\t" + kind + "\t" + rowRef + "\t" + (userId || ''));
     }
     function emitLeave(j) { emitTyped(j, 'leave'); }
     function emitPresent(j) { emitTyped(j, 'present'); }
@@ -250,13 +335,15 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
         const nodes = cont.querySelectorAll('[data-id*="user/user-"]');
         for (const n of nodes) {
             const raw = n.innerText || n.textContent || '';
-            const lines = raw.split(/[\n\r]+/).map(l => norm(l)).filter(Boolean);
-            for (const line of lines) {
-                if (!isPresentText(line)) continue;
-                const m = line.match(presentNameRx);
-                const name = m ? norm(m[1]) : '';
-                if (name && hasVisibleName(name))
-                    emitPresent({ name, text: line, row: n });
+            const lines = raw.split(/[\n\r]+/);
+            for (const rawLine of lines) {
+                const line = norm(rawLine);
+                const blank = isBlankNameBeforePhrase(rawLine, /is\s+in\s+the\s+chat/i);
+                if (!isPresentText(line) && !blank) continue;
+                const rawMatch = rawLine.match(presentNameRx) || line.match(presentNameRx);
+                let name = keepEnteredName(rawMatch ? rawMatch[1] : '');
+                if (blank) name = '';
+                emitPresent({ name, text: line || rawLine, row: n });
             }
         }
     }
@@ -269,10 +356,12 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
         }
     }
     window.__imvuReseedPresence = function() {
+        try { captureMyUserUid(); } catch (e) {}
         try { seedExistingPresence(); } catch (e) {}
     };
     function scanRecentJoins() {
         if (window._joinPollPaused) return;
+        try { captureMyUserUid(); } catch (e) {}
         try { collectPresenceFromDataIds(); } catch (e) {}
         const rows = cont.querySelectorAll('[data-id*="user/user-"], [class*="msg"], [class*="message"], [class*="chat-line"], [class*="system"], [class*="event"], [class*="notification"], [class*="join"], li, div');
         const start = Math.max(0, rows.length - 80);
@@ -414,6 +503,7 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
         }
     });
     window._o.observe(cont, { childList: true, subtree: true, characterData: true });
+    try { captureMyUserUid(); } catch (e) {}
     seedExistingJoins();
     seedExistingPresence();
     window._joinPoll = setInterval(scanRecentJoins, 2000);
@@ -421,62 +511,8 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
 window._lastChatContainer = (root.hasStream ? 'chat-stream2' : 'body-fallback')
     + (root.hasInput ? '+input' : '') + ' | ' + (cont.className || cont.tagName);
 window.__imvuSelfIdentity = function() {
-    function fold(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
-    function uidFrom(v) {
-        const s = String(v == null ? '' : v);
-        const m = s.match(/user\/user-(\d+)/i) || s.match(/\b(\d{6,})\b/);
-        return m ? m[1] : '';
-    }
-    function nameFrom(v) {
-        if (v == null) return '';
-        if (typeof v === 'string') return fold(v);
-        if (typeof v !== 'object') return '';
-        const keys = ['displayName', 'display_name', 'avatarName', 'userName', 'username', 'name'];
-        for (const k of keys) {
-            try {
-                if (typeof v[k] === 'string' && v[k].trim()) return fold(v[k]);
-                if (typeof v.get === 'function') {
-                    const g = v.get(k);
-                    if (typeof g === 'string' && g.trim()) return fold(g);
-                }
-            } catch (e) {}
-        }
-        return '';
-    }
-    function harvest(obj, depth) {
-        if (!obj || typeof obj !== 'object' || depth > 3) return;
-        const nameKeys = ['avatarName', 'displayName', 'display_name', 'userName', 'username', 'loggedInUserName'];
-        const uidKeys = ['legacy_cid', 'cid', 'userId', 'user_id', 'customerId', 'customer_id'];
-        const nest = ['user', 'self', 'me', 'currentUser', 'avatar', 'loggedInUser', 'customer'];
-        for (const k of nameKeys) {
-            if (window.__imvuSelfName) break;
-            try {
-                const v = typeof obj.get === 'function' ? obj.get(k) : obj[k];
-                const n = nameFrom(v);
-                if (n && n.length <= 60) window.__imvuSelfName = n;
-            } catch (e) {}
-        }
-        for (const k of uidKeys) {
-            if (window.__imvuSelfUid) break;
-            try {
-                const v = typeof obj.get === 'function' ? obj.get(k) : obj[k];
-                const u = uidFrom(v);
-                if (u) window.__imvuSelfUid = u;
-            } catch (e) {}
-        }
-        for (const k of nest) {
-            try {
-                const v = typeof obj.get === 'function' ? obj.get(k) : obj[k];
-                harvest(v, depth + 1);
-            } catch (e) {}
-        }
-    }
-    const chat = window.__imvuCompanionActiveChat
-        || (window.top && window.top.__imvuCompanionActiveChat);
-    harvest(chat, 0);
-    try { harvest(window.IMVU, 0); } catch (e) {}
-    try { harvest(window.IMVU && window.IMVU.Client, 0); } catch (e) {}
-    return (window.__imvuSelfName || '') + '\t' + (window.__imvuSelfUid || '');
+    try { captureMyUserUid(); } catch (e) {}
+    return '\t' + (window.__imvuSelfUid || '');
 };
 try { window.__imvuSelfIdentity(); } catch (e) {}
 try { seedExistingPresence(); } catch (e) {}
