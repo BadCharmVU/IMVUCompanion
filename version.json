@@ -1,6 +1,6 @@
 {
-    "version":  "0.9.92",
-    "downloadUrl":  "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.92/IMVUCompanion-Setup-v0.9.92.exe",
-    "sha256":  "9f373990a0474ee03d4d8286a1a4fc713fe81ed9222832fea5de07cea8731713",
-    "releaseNotes":  "v0.9.92\n\nRoom roster\n- Live list of people in the room, kept in join order\n- Message someone in public chat or whisper from the list\n- Remove User from the room (host action, not Kick)\n- Rejoins always return to the list and Activity Log, with a visit count\n\nWelcome and layout\n- Header shows when only the second welcome message is on\n- Section open/closed state is remembered more reliably\n\nAlso\n- Activity Log no longer repeats old leave lines\n- Greeting still greets once; the live list is no longer tied to that skip"
+    "version": "0.9.95",
+    "downloadUrl": "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.95/IMVUCompanion-Setup-v0.9.95.exe",
+    "sha256": "",
+    "releaseNotes": "v0.9.95\n\nAnswering (Recorder)\nWhen someone leaves you a recorded note, Companion can reply automatically — one reply per note, in the order you choose, with no limit.\n- Public notes still need your trigger word. Whispers are saved with or without it.\n- Public replies start with their name. Whisper replies stay private, on the same path the note arrived.\n- Example: first note gets reply 1, the next gets reply 2, and so on. When the list runs out, new notes are still saved, but nothing more is sent to chat.\n- Use the up and down arrows to reorder replies. English and Russian each have their own list.\n\nOpening and closing\nThe IMVU panel is covered by a short splash while the page loads, and again while Companion leaves the room and saves. You should not see the page jump or go black.\n\nAlso\n- Welcome messages, triggers, console notices, and answering texts are kept together and remembered across updates.\n- Sample welcome and trigger lines are simpler placeholders you can edit."
 }

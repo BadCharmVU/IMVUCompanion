@@ -33,6 +33,21 @@ public partial class MainWindow
 
     private Dictionary<string, CategorySettings> _categorySettings =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Dictionary<string, CategorySettings>> _settingsByLang =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _activeCategoryByLang =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private void BindCategorySettingsToLanguage(string lang)
+    {
+        if (string.IsNullOrEmpty(lang)) lang = "en";
+        if (!_settingsByLang.TryGetValue(lang, out var bag) || bag == null)
+        {
+            bag = new Dictionary<string, CategorySettings>(StringComparer.OrdinalIgnoreCase);
+            _settingsByLang[lang] = bag;
+        }
+        _categorySettings = bag;
+    }
 
     /// <summary>category -> set of user uids who already got a reply (when allow-repeat is off).</summary>
     private readonly Dictionary<string, HashSet<string>> _categoryRepliedOnceByUser =
@@ -263,11 +278,11 @@ public partial class MainWindow
 
     private void EnsureSettingsForAllCategories()
     {
-        foreach (var key in _commandCategories.Keys)
+        var visible = new HashSet<string>(CategoriesForLanguage(_commandLanguage), StringComparer.OrdinalIgnoreCase);
+        foreach (var key in visible)
             GetOrCreateCategorySettings(key);
-        // Drop orphan settings for removed categories
         foreach (var orphan in _categorySettings.Keys
-                     .Where(k => !_commandCategories.ContainsKey(k)).ToList())
+                     .Where(k => !visible.Contains(k)).ToList())
             _categorySettings.Remove(orphan);
     }
 

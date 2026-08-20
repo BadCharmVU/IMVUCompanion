@@ -714,6 +714,73 @@
             </Setter>
         </Style>
 
+        <!-- 22×22 square, same face as Win11Button. Disabled only tints border + icon. -->
+        <Style x:Key="IconSquareButton" TargetType="Button">
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="MinWidth" Value="22"/>
+            <Setter Property="MinHeight" Value="22"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Background" Value="#1E1E32"/>
+            <Setter Property="BorderBrush" Value="#3A3A58"/>
+            <Setter Property="Foreground" Value="#E8E8FF"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                CornerRadius="4" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2C2C48"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#5050A0"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#161628"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#6A6A88"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#2A2A40"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ReceiptListItem" TargetType="ListBoxItem">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Margin" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="#2A2A40" BorderThickness="0,0,0,1"
+                                Height="26" Padding="0" SnapsToDevicePixels="True">
+                            <ContentPresenter VerticalAlignment="Stretch" HorizontalAlignment="Stretch"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1E1E38"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#242444"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Shared dark dropdown palette -->
         <SolidColorBrush x:Key="Win11ComboBg" Color="#1E1E32"/>
         <SolidColorBrush x:Key="Win11ComboFg" Color="#E8E8FF"/>
@@ -932,7 +999,46 @@
                 </Border>
                 <TextBlock DockPanel.Dock="Top" Text="Log in and open your chat room here, then Start →"
                            Foreground="#606080" FontSize="9" Margin="2,0,0,4"/>
-                <wv2:WebView2 x:Name="ImvuWebView" />
+                <Grid Background="#12121F">
+                    <wv2:WebView2 x:Name="ImvuWebView" Visibility="Collapsed" />
+                    <Border x:Name="ImvuSplashOverlay" Background="#12121F" Panel.ZIndex="8">
+                        <Grid>
+                            <MediaElement x:Name="ImvuSplashVideo"
+                                          LoadedBehavior="Manual" UnloadedBehavior="Stop"
+                                          Stretch="UniformToFill" Volume="0"
+                                          Visibility="Collapsed"
+                                          MediaOpened="ImvuSplashVideo_MediaOpened"
+                                          MediaEnded="ImvuSplashVideo_MediaEnded"
+                                          MediaFailed="ImvuSplashVideo_MediaFailed"/>
+                            <StackPanel x:Name="ImvuSplashFallback"
+                                        VerticalAlignment="Center" HorizontalAlignment="Center">
+                                <Grid Width="40" Height="40" SnapsToDevicePixels="False"
+                                      UseLayoutRounding="False">
+                                    <Ellipse Width="40" Height="40"
+                                             Stroke="#2A2A4A" StrokeThickness="3"
+                                             Fill="Transparent"/>
+                                    <Ellipse Width="40" Height="40"
+                                             Stroke="#7B8CFF" StrokeThickness="3"
+                                             StrokeDashArray="31.4 94.2"
+                                             StrokeDashCap="Round"
+                                             Fill="Transparent"
+                                             RenderTransformOrigin="0.5,0.5">
+                                        <Ellipse.RenderTransform>
+                                            <RotateTransform x:Name="ImvuSplashSpin"/>
+                                        </Ellipse.RenderTransform>
+                                    </Ellipse>
+                                </Grid>
+                                <TextBlock x:Name="ImvuSplashTitle" Text="Loading IMVU…"
+                                           Foreground="#C8D0FF" FontSize="15"
+                                           FontWeight="SemiBold" Margin="0,18,0,0"
+                                           HorizontalAlignment="Center"/>
+                                <TextBlock x:Name="ImvuSplashHint" Text="Letting the page start on its own"
+                                           Foreground="#6A6A88" FontSize="11" Margin="0,6,0,0"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                </Grid>
             </DockPanel>
         </Border>
 
@@ -1077,7 +1183,7 @@
                                         <ListBox x:Name="Welcome1List" Height="72"
                                                  ItemContainerStyle="{StaticResource MessageListItem}"
                                                  SelectionChanged="Welcome1List_SelectionChanged"
-                                                 PreviewMouseWheel="NestedControl_PreviewMouseWheel"
+                                                 PreviewMouseWheel="MessageList_PreviewMouseWheel"
                                                  Background="Transparent" BorderThickness="0"
                                                  Foreground="#C0C0E0"
                                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
@@ -1122,7 +1228,7 @@
                                             <ListBox x:Name="Welcome2List" Height="72"
                                                      ItemContainerStyle="{StaticResource MessageListItem}"
                                                      SelectionChanged="Welcome2List_SelectionChanged"
-                                                     PreviewMouseWheel="NestedControl_PreviewMouseWheel"
+                                                     PreviewMouseWheel="MessageList_PreviewMouseWheel"
                                                      Background="Transparent" BorderThickness="0"
                                                      Foreground="#C0C0E0"
                                                      ScrollViewer.VerticalScrollBarVisibility="Auto"
@@ -1261,7 +1367,7 @@
                                             <ItemsControl x:Name="CommandsListView"
                                                           Background="Transparent"
                                                           Foreground="#C0C0E0" FontSize="12"
-                                                          PreviewMouseWheel="NestedControl_PreviewMouseWheel">
+                                                          PreviewMouseWheel="MessageList_PreviewMouseWheel">
                                                 <ItemsControl.ItemsPanel>
                                                     <ItemsPanelTemplate>
                                                         <StackPanel/>
@@ -1728,14 +1834,15 @@
                                        Text="Message recorder machine for when you gone AFK"/>
                             <Border Style="{StaticResource SectionContentBox}">
                                 <StackPanel>
-                                    <Grid Height="28" Margin="0,0,0,6">
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <CheckBox x:Name="RecorderEnabledCheck"
+                                        <Grid Height="28" Margin="0,0,0,6">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <CheckBox x:Name="RecorderEnabledCheck"
                                                   Style="{StaticResource CompanionCheckBox}"
                                                   Content="Turn on Message Recorder" VerticalAlignment="Center"
                                                   Margin="0,0,8,0"
@@ -1746,7 +1853,7 @@
                                                    VerticalAlignment="Center" Margin="8,0,6,0"
                                                    Visibility="Collapsed"/>
                                         <TextBox x:Name="RecorderTriggerBox" Grid.Column="3"
-                                                 Height="26" Width="160" MinWidth="120" MaxWidth="160"
+                                                 Height="26" Width="112" MinWidth="80" MaxWidth="112"
                                                  HorizontalAlignment="Right" VerticalAlignment="Center"
                                                  Visibility="Collapsed"
                                                  Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
@@ -1754,11 +1861,135 @@
                                                  PreviewMouseWheel="NestedControl_PreviewMouseWheel"
                                                  LostFocus="RecorderTriggerBox_LostFocus"
                                                  ToolTip="Users send this trigger to leave you a recorded message."/>
+                                        <Button x:Name="RecorderAnswerGearBtn" Grid.Column="4"
+                                                Width="26" Height="26" MinWidth="26" Padding="0"
+                                                Margin="6,0,0,0" FontSize="13"
+                                                Content="⚙" ToolTip="Answering Settings"
+                                                Style="{StaticResource Win11Button}"
+                                                Visibility="Collapsed"
+                                                Click="RecorderAnswerGear_Click"/>
                                     </Grid>
                                     <StackPanel x:Name="RecorderUsersPanel"/>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
+
+                            <Border x:Name="RecorderAnswerModal" Visibility="Collapsed"
+                                    Background="#E012121F" CornerRadius="6" Panel.ZIndex="21">
+                                <Border Background="#252540" BorderBrush="#404060" BorderThickness="1"
+                                        CornerRadius="14" Padding="16" Margin="8"
+                                        VerticalAlignment="Center" HorizontalAlignment="Stretch"
+                                        MaxHeight="420">
+                                    <DockPanel LastChildFill="True">
+                                        <Button DockPanel.Dock="Bottom" Content="Done" Height="28" Width="90"
+                                                HorizontalAlignment="Right" Margin="0,10,0,0"
+                                                Style="{StaticResource Win11Button}"
+                                                Click="RecorderAnswerDone_Click"/>
+                                        <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                                      PreviewMouseWheel="MessageList_PreviewMouseWheel">
+                                            <StackPanel>
+                                                <TextBlock Text="Answering Settings:"
+                                                           FontSize="14" FontWeight="SemiBold"
+                                                           Foreground="#E8E8FF" Margin="0,0,0,2"/>
+                                                <TextBlock Text="Defines the order of automated replies. (unlimited)"
+                                                           FontSize="11" Foreground="#8080A8"
+                                                           Margin="0,0,0,10"/>
+                                                <CheckBox x:Name="RecorderConfirmReceiptCheck"
+                                                          Style="{StaticResource CompanionCheckBox}"
+                                                          Content="Confirm Receipt"
+                                                          Margin="0,0,0,8"
+                                                          Checked="RecorderConfirmReceipt_Changed"
+                                                          Unchecked="RecorderConfirmReceipt_Changed"/>
+                                                <StackPanel x:Name="RecorderReceiptEditorPanel">
+                                                    <Border CornerRadius="6" Background="#0F0F1C" BorderBrush="#3A3A58"
+                                                            BorderThickness="1" ClipToBounds="True" Margin="0,0,0,6">
+                                                        <ListBox x:Name="RecorderReceiptList" Height="110"
+                                                                 ItemContainerStyle="{StaticResource ReceiptListItem}"
+                                                                 SelectionChanged="RecorderReceiptList_SelectionChanged"
+                                                                 PreviewMouseWheel="MessageList_PreviewMouseWheel"
+                                                                 Background="Transparent" BorderThickness="0"
+                                                                 Foreground="#C0C0E0"
+                                                                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                                                 HorizontalContentAlignment="Stretch">
+                                                            <ListBox.ItemTemplate>
+                                                                <DataTemplate>
+                                                                    <Grid Height="25">
+                                                                        <Grid.ColumnDefinitions>
+                                                                            <ColumnDefinition Width="28"/>
+                                                                            <ColumnDefinition Width="*"/>
+                                                                            <ColumnDefinition Width="52"/>
+                                                                        </Grid.ColumnDefinitions>
+                                                                        <TextBlock Text="{Binding Number}" Foreground="#8080A8"
+                                                                                   FontSize="12" VerticalAlignment="Center"
+                                                                                   Margin="6,0,0,0"/>
+                                                                        <TextBlock Grid.Column="1" Text="{Binding Text}"
+                                                                                   Foreground="#C0C0E0" FontSize="12"
+                                                                                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                                                                   VerticalAlignment="Center" Margin="6,0"/>
+                                                                        <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                                                                    HorizontalAlignment="Right" VerticalAlignment="Center"
+                                                                                    Margin="0,0,4,0">
+                                                                            <Button Style="{StaticResource IconSquareButton}"
+                                                                                    ToolTip="Move up"
+                                                                                    IsEnabled="{Binding CanMoveUp}"
+                                                                                    Tag="{Binding}"
+                                                                                    PreviewMouseLeftButtonDown="RecorderReceiptMoveUp_Preview">
+                                                                                <Path Data="M 0,0 L 5,5 L 0,10"
+                                                                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                                                      StrokeThickness="1.6"
+                                                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                                                      StrokeLineJoin="Round"
+                                                                                      Width="7" Height="10" Stretch="Uniform"
+                                                                                      RenderTransformOrigin="0.5,0.5">
+                                                                                    <Path.RenderTransform>
+                                                                                        <RotateTransform Angle="-90"/>
+                                                                                    </Path.RenderTransform>
+                                                                                </Path>
+                                                                            </Button>
+                                                                            <Button Style="{StaticResource IconSquareButton}"
+                                                                                    ToolTip="Move down"
+                                                                                    IsEnabled="{Binding CanMoveDown}"
+                                                                                    Tag="{Binding}"
+                                                                                    PreviewMouseLeftButtonDown="RecorderReceiptMoveDown_Preview">
+                                                                                <Path Data="M 0,0 L 5,5 L 0,10"
+                                                                                      Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                                                                      StrokeThickness="1.6"
+                                                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                                                      StrokeLineJoin="Round"
+                                                                                      Width="7" Height="10" Stretch="Uniform"
+                                                                                      RenderTransformOrigin="0.5,0.5">
+                                                                                    <Path.RenderTransform>
+                                                                                        <RotateTransform Angle="90"/>
+                                                                                    </Path.RenderTransform>
+                                                                                </Path>
+                                                                            </Button>
+                                                                        </StackPanel>
+                                                                    </Grid>
+                                                                </DataTemplate>
+                                                            </ListBox.ItemTemplate>
+                                                        </ListBox>
+                                                    </Border>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBox x:Name="RecorderReceiptEditBox" Grid.Column="0"
+                                                                 Height="26" Margin="0,0,6,0"
+                                                                 Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58"
+                                                                 PreviewMouseWheel="NestedControl_PreviewMouseWheel"/>
+                                                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                                            <Button Content="Add" Click="RecorderReceiptAdd_Click" Margin="0,0,4,0"/>
+                                                            <Button Content="Update" Click="RecorderReceiptUpdate_Click" Margin="0,0,4,0"/>
+                                                            <Button Content="Delete" Click="RecorderReceiptDelete_Click"/>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </ScrollViewer>
+                                    </DockPanel>
+                                </Border>
+                            </Border>
 
                             <Border x:Name="RecorderReplyModal" Visibility="Collapsed"
                                     Background="#E012121F" CornerRadius="6" Panel.ZIndex="20">
@@ -1787,7 +2018,7 @@
                         </Grid>
                     </Expander>
 
-                    <!-- ========== DM Settings ========== -->
+                    <!-- ========== Room Console ========== -->
                     <Expander x:Name="DmSettingsExpander" Style="{StaticResource SectionExpander}"
                               IsExpanded="False" Margin="0,0,0,6"
                               Loaded="DmSettingsExpander_Layout"
@@ -1796,7 +2027,7 @@
                               Collapsed="SectionExpander_ExpandedChanged">
                         <Expander.Header>
                             <Grid x:Name="DmSettingsHeaderRoot" HorizontalAlignment="Stretch" MinWidth="160">
-                                <TextBlock Text="DM Settings"
+                                <TextBlock Text="Room Console"
                                            Foreground="#E8E8FF" FontSize="14" FontWeight="SemiBold"
                                            VerticalAlignment="Center"/>
                             </Grid>
@@ -1831,14 +2062,14 @@
                                 </Border>
                             </StackPanel>
 
-                            <!-- Edit DM messages modal — same idea as Greeting editor -->
+                            <!-- Edit console notices — same idea as Greeting editor -->
                             <Border x:Name="DmEditModal" Visibility="Collapsed"
                                     Background="#E012121F" CornerRadius="6" Panel.ZIndex="20">
                                 <Border Background="#252540" BorderBrush="#404060" BorderThickness="1"
                                         CornerRadius="14" Padding="16" Margin="8"
                                         VerticalAlignment="Center" HorizontalAlignment="Stretch">
                                     <StackPanel>
-                                        <TextBlock Text="Edit DM Messages" FontSize="14" FontWeight="SemiBold"
+                                        <TextBlock Text="Edit Console Messages" FontSize="14" FontWeight="SemiBold"
                                                    Foreground="#E8E8FF" Margin="0,0,0,10"/>
                                         <Grid Height="28" Margin="0,0,0,6">
                                             <Grid.ColumnDefinitions>
@@ -1859,7 +2090,7 @@
                                             <ListBox x:Name="DmEditList" Height="72"
                                                      ItemContainerStyle="{StaticResource MessageListItem}"
                                                      SelectionChanged="DmEditList_SelectionChanged"
-                                                     PreviewMouseWheel="NestedControl_PreviewMouseWheel"
+                                                     PreviewMouseWheel="MessageList_PreviewMouseWheel"
                                                      Background="Transparent" BorderThickness="0"
                                                      Foreground="#C0C0E0"
                                                      ScrollViewer.VerticalScrollBarVisibility="Auto"

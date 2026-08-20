@@ -2,9 +2,9 @@
 
 Windows desktop companion for **IMVU Next** chat rooms. IMVU runs inside the app (WebView2). The companion can greet joiners, answer `!commands`, record AFK notes, send notices to people in the room, and check for updates automatically.
 
-**Current release:** [v0.9.92](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
+**Current release:** [v0.9.95](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
 
-Download **`IMVUCompanion-Setup-v0.9.92.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
+Download **`IMVUCompanion-Setup-v0.9.95.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
 
 ---
 
@@ -14,7 +14,7 @@ Download **`IMVUCompanion-Setup-v0.9.92.exe`** from [Releases](https://github.co
 - **Welcome messages** when someone joins — public and/or whisper, with `{name}` placeholder
 - Second optional welcome line (public or whisper)
 - **Message Recorder Machine** — AFK notes via a custom trigger, plus incoming whispers
-- **DM Settings** — live room roster: message, whisper, or remove people in the room
+- **Room Console** — live room roster: message, whisper, or remove people in the room
 - **!Commands** with categories and languages (English / Russian)
 - **!bbot** AI hook (providers configurable; maintenance reply when not set up)
 - Room-aware bot: works while you are in a room; pauses cleanly when you leave
@@ -49,21 +49,18 @@ Unsigned builds may show a first-run warning: right-click the installer or app �
 
 ## Your settings are kept
 
-Welcome messages, `!commands`, AI settings, and window layout are stored under:
+Welcome messages, triggers, room console notices, AI settings, and window layout are stored under:
 
 `%LOCALAPPDATA%\IMVUCompanion\`
 
 | File | Purpose |
 |------|---------|
-| `messages.json` | Welcome / greeting templates |
-| `commands.json` | `!command` replies |
-| `ai_settings.json` | API keys and AI provider settings |
-| `ui_layout.json` | Window size / panel layout |
+| `companion.db` | Welcome, triggers, Room Console, recorder, answering texts, layout, and AI keys |
 | `WebView2\` | IMVU login session (browser profile) |
 
 - Edits survive **app restarts**.
 - Installing a **new version does not replace** your custom messages or commands.
-- First run creates defaults (including sample welcome lines and sample `!commands`) if no file exists yet.
+- First run creates simple sample welcome lines, two trigger categories, and three answering replies you can edit.
 
 ---
 

@@ -27,6 +27,8 @@ public sealed class RecorderMessageVm
 public sealed class RecorderUserVm
 {
     public string Name { get; set; } = "";
+    public string UserId { get; set; } = "";
+    public int ReceiptIndex { get; set; }
     public ObservableCollection<RecorderMessageVm> Messages { get; } = new();
 }
 
@@ -45,8 +47,9 @@ public sealed class RoomUserVm
 
 public partial class MainWindow
 {
-    private static readonly string RecorderFile = UserDataPaths.GetConfigFile("recorder.json");
-    private static readonly string DmMessagesFile = UserDataPaths.GetConfigFile("dm_messages.json");
+
+    private readonly Dictionary<string, List<string>> _consoleByLang =
+        new(StringComparer.OrdinalIgnoreCase);
     private static readonly SolidColorBrush HeaderActiveGreen = CreateFrozenBrush(0x4A, 0xDE, 0x80);
     private static readonly SolidColorBrush HeaderInactiveRed = CreateFrozenBrush(0xFF, 0x55, 0x55);
     private static readonly SolidColorBrush RoomUserIdleBg = CreateFrozenBrush(0x25, 0x25, 0x40);
@@ -73,6 +76,12 @@ public partial class MainWindow
     private readonly ObservableCollection<RecorderUserVm> _recorderUsers = new();
     private readonly ObservableCollection<DmMessageEntry> _dmMessages = new();
     private readonly Dictionary<string, RecorderUserVm> _recorderByName =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, RecorderUserVm> _recorderByUid =
+        new(StringComparer.Ordinal);
+    private bool _confirmReceipt = true;
+    private readonly List<string> _receiptMessages = new();
+    private readonly Dictionary<string, List<string>> _receiptByLang =
         new(StringComparer.OrdinalIgnoreCase);
     private int _rosterSeedGen;
     private string? _recorderReplyUser;
@@ -174,6 +183,8 @@ public partial class MainWindow
             RecorderTriggerBox.Visibility = vis;
         if (RecorderTriggerLabel != null)
             RecorderTriggerLabel.Visibility = vis;
+        if (RecorderAnswerGearBtn != null)
+            RecorderAnswerGearBtn.Visibility = vis;
         UpdateRecorderHint();
     }
 
@@ -203,56 +214,58 @@ public partial class MainWindow
         _recorderTrigger = "RMsg";
         _recorderUsers.Clear();
         _recorderByName.Clear();
+        _recorderByUid.Clear();
+        _confirmReceipt = true;
+        _receiptMessages.Clear();
+        _receiptByLang.Clear();
         try
         {
-            if (File.Exists(RecorderFile))
+            var data = AppDatabase.LoadRecorder();
+            string t = NormalizeRecorderTrigger(data.Trigger);
+            if (!string.IsNullOrEmpty(t))
+                _recorderTrigger = t;
+            _confirmReceipt = data.ConfirmReceipt;
+            foreach (var row in data.Users)
             {
-                using var doc = JsonDocument.Parse(File.ReadAllText(RecorderFile));
-                var root = doc.RootElement;
-                if (root.TryGetProperty("trigger", out var tr))
+                if (row == null || string.IsNullOrWhiteSpace(row.Name)) continue;
+                var user = new RecorderUserVm
                 {
-                    string t = NormalizeRecorderTrigger(tr.GetString());
-                    if (!string.IsNullOrEmpty(t))
-                        _recorderTrigger = t;
-                }
-                if (root.TryGetProperty("users", out var users) && users.ValueKind == JsonValueKind.Array)
+                    Name = row.Name.Trim(),
+                    UserId = (row.UserId ?? "").Trim(),
+                    ReceiptIndex = Math.Max(0, row.ReceiptIndex)
+                };
+                foreach (var m in row.Messages)
                 {
-                    foreach (var uel in users.EnumerateArray())
+                    if (m == null || string.IsNullOrWhiteSpace(m.Text)) continue;
+                    user.Messages.Add(new RecorderMessageVm
                     {
-                        string name = uel.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                        if (string.IsNullOrWhiteSpace(name)) continue;
-                        var user = new RecorderUserVm { Name = name.Trim() };
-                        if (uel.TryGetProperty("messages", out var msgs) && msgs.ValueKind == JsonValueKind.Array)
-                        {
-                            foreach (var mel in msgs.EnumerateArray())
-                            {
-                                string text = mel.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "";
-                                if (string.IsNullOrWhiteSpace(text)) continue;
-                                string time = mel.TryGetProperty("time", out var tm) ? tm.GetString() ?? "" : "";
-                                bool whisper = mel.TryGetProperty("whisper", out var w) &&
-                                               w.ValueKind == JsonValueKind.True;
-                                string id = mel.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? "" : "";
-                                user.Messages.Add(new RecorderMessageVm
-                                {
-                                    Id = string.IsNullOrWhiteSpace(id) ? Guid.NewGuid().ToString("N") : id,
-                                    Time = FormatRecorderClock(string.IsNullOrWhiteSpace(time) ? null : time),
-                                    Text = text,
-                                    IsWhisper = whisper
-                                });
-                            }
-                        }
-                        if (user.Messages.Count == 0) continue;
-                        _recorderUsers.Add(user);
-                        _recorderByName[user.Name] = user;
-                    }
+                        Id = string.IsNullOrWhiteSpace(m.Id) ? Guid.NewGuid().ToString("N") : m.Id,
+                        Time = FormatRecorderClock(string.IsNullOrWhiteSpace(m.Time) ? null : m.Time),
+                        Text = m.Text,
+                        IsWhisper = m.IsWhisper
+                    });
                 }
+                if (user.Messages.Count == 0) continue;
+                _recorderUsers.Add(user);
+                _recorderByName[user.Name] = user;
+                if (!string.IsNullOrEmpty(user.UserId))
+                    _recorderByUid[user.UserId] = user;
+            }
+            foreach (var kv in data.AnsweringByLang)
+            {
+                if (kv.Value != null && kv.Value.Count > 0)
+                    PutAnsweringLang(kv.Key, kv.Value);
             }
         }
         catch (Exception ex)
         {
             AppendLog("Load recorder err: " + ex.Message, LogCategory.Warning);
         }
+        foreach (string lang in AppLanguageCodes())
+            SeedAnsweringLanguageIfEmpty(lang);
+        ApplyReceiptLanguage(string.IsNullOrEmpty(_currentLanguage) ? "en" : _currentLanguage);
         _recorderReady = true;
+        SaveRecorderSettings();
     }
 
     private void SaveRecorderSettings()
@@ -260,28 +273,104 @@ public partial class MainWindow
         if (!_recorderReady) return;
         try
         {
-            var payload = new
+            SyncReceiptViewToStore();
+            var langs = new HashSet<string>(AppLanguageCodes(), StringComparer.OrdinalIgnoreCase);
+            foreach (string k in _receiptByLang.Keys) langs.Add(k);
+            foreach (string lang in langs)
+                SeedAnsweringLanguageIfEmpty(lang);
+            var answering = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in _receiptByLang)
+                answering[kv.Key] = CopyTexts(kv.Value);
+            AppDatabase.SaveRecorder(new AppDatabase.RecorderData
             {
-                trigger = _recorderTrigger,
-                users = _recorderUsers.Select(u => new
+                Trigger = _recorderTrigger,
+                ConfirmReceipt = _confirmReceipt,
+                Users = _recorderUsers.Select(u => new AppDatabase.RecorderUserData
                 {
-                    name = u.Name,
-                    messages = u.Messages.Select(m => new
+                    Name = u.Name,
+                    UserId = u.UserId,
+                    ReceiptIndex = u.ReceiptIndex,
+                    Messages = u.Messages.Select(m => new AppDatabase.RecorderMessageData
                     {
-                        id = m.Id,
-                        time = m.Time,
-                        text = m.Text,
-                        whisper = m.IsWhisper
+                        Id = m.Id,
+                        Time = m.Time,
+                        Text = m.Text,
+                        IsWhisper = m.IsWhisper
                     }).ToList()
-                }).ToList()
-            };
-            File.WriteAllText(RecorderFile, JsonSerializer.Serialize(payload,
-                new JsonSerializerOptions { WriteIndented = true }));
+                }).ToList(),
+                AnsweringByLang = answering
+            });
         }
         catch (Exception ex)
         {
             AppendLog("Save recorder err: " + ex.Message, LogCategory.Warning);
         }
+    }
+
+    private static List<string> CopyTexts(IEnumerable<string>? src)
+    {
+        var list = new List<string>();
+        if (src == null) return list;
+        foreach (string t in src)
+        {
+            if (!string.IsNullOrWhiteSpace(t))
+                list.Add(t.Trim());
+        }
+        return list;
+    }
+
+    private static List<string> DefaultAnsweringTexts(string lang) =>
+        string.Equals(lang, "ru", StringComparison.OrdinalIgnoreCase)
+            ? new List<string>
+            {
+                "ваше сообщение получено.",
+                "и это сообщение тоже получено.",
+                "...ещё много их будет? все зафиксирую!"
+            }
+            : new List<string>
+            {
+                "your message was captured.",
+                "and this message was captured",
+                "...will there be more of them? I'll record everything!"
+            };
+
+    private static bool IsLegacyFactoryAnswering(List<string>? list)
+    {
+        if (list == null || list.Count == 0) return true;
+        if (list.Count != 1) return false;
+        string t = list[0].Trim();
+        return t.Equals("Your message was captured.", StringComparison.Ordinal)
+            || t.Equals("Ваше сообщение получено.", StringComparison.Ordinal);
+    }
+
+    private void PutAnsweringLang(string lang, IEnumerable<string>? texts)
+    {
+        string code = string.IsNullOrWhiteSpace(lang) ? "en" : lang.Trim().ToLowerInvariant();
+        _receiptByLang[code] = CopyTexts(texts);
+    }
+
+    private void SeedAnsweringLanguageIfEmpty(string lang)
+    {
+        string code = string.IsNullOrWhiteSpace(lang) ? "en" : lang.Trim().ToLowerInvariant();
+        if (!_receiptByLang.TryGetValue(code, out var list) || IsLegacyFactoryAnswering(list))
+            PutAnsweringLang(code, DefaultAnsweringTexts(code));
+    }
+
+    private void SyncReceiptViewToStore()
+    {
+        string lang = string.IsNullOrEmpty(_currentLanguage) ? "en" : _currentLanguage;
+        PutAnsweringLang(lang, _receiptMessages);
+    }
+
+    private void ApplyReceiptLanguage(string lang)
+    {
+        string code = string.IsNullOrWhiteSpace(lang) ? "en" : lang.Trim().ToLowerInvariant();
+        SeedAnsweringLanguageIfEmpty(code);
+        _receiptMessages.Clear();
+        _receiptMessages.AddRange(CopyTexts(_receiptByLang[code]));
+        if (RecorderReceiptEditBox != null)
+            RecorderReceiptEditBox.Text = "";
+        RefreshReceiptList();
     }
 
     private static bool TryGetFirstWord(string msg, out string word)
@@ -332,7 +421,7 @@ public partial class MainWindow
         return DateTime.Now.ToString("HH:mm");
     }
 
-    private void TryRecordChatMessage(string speaker, string msg, bool isWhisper)
+    private void TryRecordChatMessage(string speaker, string msg, bool isWhisper, string? userId = null)
     {
         if (!_recorderEnabled || string.IsNullOrWhiteSpace(msg)) return;
         if (IsBotOwnMessage(speaker, msg))
@@ -350,13 +439,36 @@ public partial class MainWindow
         string body = triggerHit ? RecorderPayload(msg) : msg.Trim();
         if (IsRecorderChromeLabel(body)) return;
         string stamp = DateTime.Now.ToString("HH:mm");
+        string uid = (userId ?? "").Trim();
 
-        if (!_recorderByName.TryGetValue(name, out var user))
+        RecorderUserVm? user = null;
+        if (!string.IsNullOrEmpty(uid) && _recorderByUid.TryGetValue(uid, out user) && user != null)
         {
-            user = new RecorderUserVm { Name = name };
+            if (!string.IsNullOrWhiteSpace(name) &&
+                !string.Equals(user.Name, name, StringComparison.Ordinal))
+            {
+                _recorderByName.Remove(user.Name);
+                user.Name = name;
+                _recorderByName[name] = user;
+            }
+        }
+        else if (_recorderByName.TryGetValue(name, out user) && user != null)
+        {
+            if (!string.IsNullOrEmpty(uid) && string.IsNullOrEmpty(user.UserId))
+            {
+                user.UserId = uid;
+                _recorderByUid[uid] = user;
+            }
+        }
+        else
+        {
+            user = new RecorderUserVm { Name = name, UserId = uid };
             _recorderByName[name] = user;
+            if (!string.IsNullOrEmpty(uid))
+                _recorderByUid[uid] = user;
             _recorderUsers.Add(user);
         }
+
         user.Messages.Add(new RecorderMessageVm
         {
             Time = stamp,
@@ -365,6 +477,33 @@ public partial class MainWindow
         });
         SaveRecorderSettings();
         RefreshRecorderUsersUi();
+        _ = TrySendReceiptAsync(user, isWhisper);
+    }
+
+    private async Task TrySendReceiptAsync(RecorderUserVm user, bool isWhisper)
+    {
+        if (!_confirmReceipt || _receiptMessages.Count == 0) return;
+        int i = user.ReceiptIndex;
+        if (i < 0 || i >= _receiptMessages.Count) return;
+        string text = _receiptMessages[i];
+        user.ReceiptIndex = i + 1;
+        SaveRecorderSettings();
+        if (!isWhisper)
+            text = PrefixPublicDm(user.Name, text);
+        try
+        {
+            if (isWhisper)
+            {
+                await SendToImvuChat(text, whisperReply: true, whisperSpeaker: user.Name,
+                    proactiveWhisperToUser: true, joinUserId: user.UserId,
+                    requireBotActive: false, logSend: false);
+            }
+            else
+            {
+                await SendToImvuChat(text, requireBotActive: false, logSend: false);
+            }
+        }
+        catch { }
     }
 
     private void RefreshRecorderUsersUi()
@@ -640,6 +779,145 @@ public partial class MainWindow
         UpdateRecorderReplyCount();
     }
 
+    private sealed class ReceiptLineVm
+    {
+        public int Index { get; init; }
+        public string Number { get; init; } = "";
+        public string Text { get; init; } = "";
+        public bool CanMoveUp { get; init; }
+        public bool CanMoveDown { get; init; }
+    }
+
+    private bool _receiptUiSyncing;
+
+    private void RecorderAnswerGear_Click(object sender, RoutedEventArgs e)
+    {
+        _receiptUiSyncing = true;
+        try
+        {
+            if (RecorderConfirmReceiptCheck != null)
+                RecorderConfirmReceiptCheck.IsChecked = _confirmReceipt;
+        }
+        finally { _receiptUiSyncing = false; }
+        UpdateReceiptEditorVisibility();
+        RefreshReceiptList();
+        if (RecorderReceiptEditBox != null)
+            RecorderReceiptEditBox.Text = "";
+        if (RecorderAnswerModal != null)
+            RecorderAnswerModal.Visibility = Visibility.Visible;
+    }
+
+    private void RecorderAnswerDone_Click(object sender, RoutedEventArgs e)
+    {
+        if (RecorderAnswerModal != null)
+            RecorderAnswerModal.Visibility = Visibility.Collapsed;
+        SaveRecorderSettings();
+    }
+
+    private void RecorderConfirmReceipt_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_receiptUiSyncing || !_recorderReady) return;
+        _confirmReceipt = RecorderConfirmReceiptCheck?.IsChecked == true;
+        UpdateReceiptEditorVisibility();
+        SaveRecorderSettings();
+    }
+
+    private void UpdateReceiptEditorVisibility()
+    {
+        if (RecorderReceiptEditorPanel == null) return;
+        RecorderReceiptEditorPanel.Visibility =
+            _confirmReceipt ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void RefreshReceiptList()
+    {
+        if (RecorderReceiptList == null) return;
+        var rows = new List<ReceiptLineVm>();
+        int last = _receiptMessages.Count - 1;
+        for (int i = 0; i < _receiptMessages.Count; i++)
+        {
+            rows.Add(new ReceiptLineVm
+            {
+                Index = i,
+                Number = (i + 1) + ".",
+                Text = _receiptMessages[i],
+                CanMoveUp = i > 0,
+                CanMoveDown = i < last
+            });
+        }
+        RecorderReceiptList.ItemsSource = null;
+        RecorderReceiptList.ItemsSource = rows;
+    }
+
+    private void RecorderReceiptMoveUp_Preview(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not FrameworkElement { Tag: ReceiptLineVm row }) return;
+        MoveReceiptLine(row.Index, -1);
+    }
+
+    private void RecorderReceiptMoveDown_Preview(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not FrameworkElement { Tag: ReceiptLineVm row }) return;
+        MoveReceiptLine(row.Index, 1);
+    }
+
+    private void MoveReceiptLine(int index, int delta)
+    {
+        int dest = index + delta;
+        if (index < 0 || dest < 0 || index >= _receiptMessages.Count || dest >= _receiptMessages.Count)
+            return;
+        (_receiptMessages[index], _receiptMessages[dest]) = (_receiptMessages[dest], _receiptMessages[index]);
+        SaveRecorderSettings();
+        RefreshReceiptList();
+    }
+
+    private void RecorderReceiptList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        int i = RecorderReceiptList?.SelectedIndex ?? -1;
+        if (i < 0 || i >= _receiptMessages.Count) return;
+        if (RecorderReceiptEditBox != null)
+            RecorderReceiptEditBox.Text = _receiptMessages[i];
+    }
+
+    private void RecorderReceiptAdd_Click(object sender, RoutedEventArgs e)
+    {
+        string text = RecorderReceiptEditBox?.Text?.Trim() ?? "";
+        if (string.IsNullOrEmpty(text)) return;
+        _receiptMessages.Add(text);
+        RefreshReceiptList();
+        SaveRecorderSettings();
+        if (RecorderReceiptEditBox != null) RecorderReceiptEditBox.Text = "";
+    }
+
+    private void RecorderReceiptUpdate_Click(object sender, RoutedEventArgs e)
+    {
+        int i = RecorderReceiptList?.SelectedIndex ?? -1;
+        string text = RecorderReceiptEditBox?.Text?.Trim() ?? "";
+        if (i < 0 || i >= _receiptMessages.Count || string.IsNullOrEmpty(text)) return;
+        _receiptMessages[i] = text;
+        RefreshReceiptList();
+        if (RecorderReceiptList != null) RecorderReceiptList.SelectedIndex = i;
+        SaveRecorderSettings();
+    }
+
+    private void RecorderReceiptDelete_Click(object sender, RoutedEventArgs e)
+    {
+        int i = RecorderReceiptList?.SelectedIndex ?? -1;
+        if (i < 0 || i >= _receiptMessages.Count) return;
+        _receiptMessages.RemoveAt(i);
+        SyncReceiptViewToStore();
+        if (_receiptMessages.Count == 0)
+        {
+            SeedAnsweringLanguageIfEmpty(_currentLanguage);
+            ApplyReceiptLanguage(_currentLanguage);
+        }
+        RefreshReceiptList();
+        if (RecorderReceiptEditBox != null) RecorderReceiptEditBox.Text = "";
+        SaveRecorderSettings();
+    }
+
     private void RecorderDelete_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: (RecorderUserVm user, RecorderMessageVm msg) }) return;
@@ -650,71 +928,68 @@ public partial class MainWindow
         {
             _recorderUsers.Remove(user);
             _recorderByName.Remove(user.Name);
+            if (!string.IsNullOrEmpty(user.UserId))
+                _recorderByUid.Remove(user.UserId);
         }
         SaveRecorderSettings();
         RefreshRecorderUsersUi();
     }
 
-    private static readonly string[] DefaultDmTexts =
-    {
-        "This is 1st Notice.",
-        "This is final Notice."
-    };
+    private static List<string> DefaultConsoleTexts(string lang) =>
+        string.Equals(lang, "ru", StringComparison.OrdinalIgnoreCase)
+            ? new List<string> { "Это 1-е уведомление.", "Это последнее уведомление." }
+            : new List<string> { "This is 1st Notice.", "This is final Notice." };
 
     private void LoadDmMessages()
     {
         _dmReady = false;
         _dmAsWhisper = false;
+        _chipMessagePrefix = true;
+        _consoleByLang.Clear();
         _dmMessages.Clear();
         try
         {
-            if (File.Exists(DmMessagesFile))
+            var data = AppDatabase.LoadConsole();
+            _dmAsWhisper = data.AsWhisper;
+            _chipMessagePrefix = data.PrefixUserName;
+            foreach (var kv in data.Messages)
             {
-                using var doc = JsonDocument.Parse(File.ReadAllText(DmMessagesFile));
-                var root = doc.RootElement;
-                if (root.TryGetProperty("asWhisper", out var aw) &&
-                    (aw.ValueKind == JsonValueKind.True || aw.ValueKind == JsonValueKind.False))
-                    _dmAsWhisper = aw.GetBoolean();
-                else if (root.TryGetProperty("delivery", out var del) &&
-                         string.Equals(del.GetString(), "whisper", StringComparison.OrdinalIgnoreCase))
-                    _dmAsWhisper = true;
-
-                if (root.TryGetProperty("prefixUserName", out var px) &&
-                    (px.ValueKind == JsonValueKind.True || px.ValueKind == JsonValueKind.False))
-                    _chipMessagePrefix = px.GetBoolean();
-                else
-                    _chipMessagePrefix = true;
-
-                if (root.TryGetProperty("messages", out var arr) &&
-                    arr.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var el in arr.EnumerateArray())
-                    {
-                        string text = el.ValueKind == JsonValueKind.String
-                            ? el.GetString() ?? ""
-                            : el.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
-                        if (string.IsNullOrWhiteSpace(text)) continue;
-                        _dmMessages.Add(new DmMessageEntry { Text = text.Trim() });
-                    }
-                }
+                if (kv.Value != null && kv.Value.Count > 0)
+                    _consoleByLang[kv.Key] = kv.Value;
             }
         }
         catch (Exception ex)
         {
-            AppendLog("Load DM messages err: " + ex.Message, LogCategory.Warning);
+            AppendLog("Load console err: " + ex.Message, LogCategory.Warning);
         }
 
-        if (_dmMessages.Count == 0)
-        {
-            foreach (string text in DefaultDmTexts)
-                _dmMessages.Add(new DmMessageEntry { Text = text });
-            _dmReady = true;
-            SaveDmMessages();
-        }
-        else
-        {
-            _dmReady = true;
-        }
+        foreach (string lang in AppLanguageCodes())
+            SeedConsoleLanguageIfEmpty(lang);
+        ApplyConsoleLanguage(_currentLanguage);
+        _dmReady = true;
+        SaveDmMessages();
+    }
+
+    private void SeedConsoleLanguageIfEmpty(string lang)
+    {
+        if (!_consoleByLang.TryGetValue(lang, out var list) || list == null || list.Count == 0)
+            _consoleByLang[lang] = DefaultConsoleTexts(lang);
+    }
+
+    private void SyncConsoleViewToStore()
+    {
+        string lang = string.IsNullOrEmpty(_currentLanguage) ? "en" : _currentLanguage;
+        _consoleByLang[lang] = _dmMessages.Select(m => m.Text).Where(t => !string.IsNullOrWhiteSpace(t)).ToList();
+    }
+
+    private void ApplyConsoleLanguage(string lang)
+    {
+        SeedConsoleLanguageIfEmpty(lang);
+        _dmMessages.Clear();
+        foreach (string text in _consoleByLang[lang])
+            _dmMessages.Add(new DmMessageEntry { Text = text });
+        RefreshDmMessageCombo();
+        RefreshDmEditList();
     }
 
     private void SaveDmMessages()
@@ -722,19 +997,21 @@ public partial class MainWindow
         if (!_dmReady) return;
         try
         {
-            var payload = new
+            SyncConsoleViewToStore();
+            var langs = new HashSet<string>(AppLanguageCodes(), StringComparer.OrdinalIgnoreCase);
+            foreach (string k in _consoleByLang.Keys) langs.Add(k);
+            foreach (string lang in langs)
+                SeedConsoleLanguageIfEmpty(lang);
+            AppDatabase.SaveConsole(new AppDatabase.ConsoleData
             {
-                asWhisper = _dmAsWhisper,
-                delivery = _dmAsWhisper ? "whisper" : "public",
-                prefixUserName = _chipMessagePrefix,
-                messages = _dmMessages.Select(m => new { text = m.Text }).ToList()
-            };
-            File.WriteAllText(DmMessagesFile, JsonSerializer.Serialize(payload,
-                new JsonSerializerOptions { WriteIndented = true }));
+                AsWhisper = _dmAsWhisper,
+                PrefixUserName = _chipMessagePrefix,
+                Messages = _consoleByLang
+            });
         }
         catch (Exception ex)
         {
-            AppendLog("Save DM messages err: " + ex.Message, LogCategory.Warning);
+            AppendLog("Save console err: " + ex.Message, LogCategory.Warning);
         }
     }
 
@@ -840,7 +1117,7 @@ public partial class MainWindow
         _dmMessages.RemoveAt(i);
         if (_dmMessages.Count == 0)
         {
-            foreach (string text in DefaultDmTexts)
+            foreach (string text in DefaultConsoleTexts(_currentLanguage))
                 _dmMessages.Add(new DmMessageEntry { Text = text });
         }
         SaveDmMessages();
@@ -1536,7 +1813,7 @@ public partial class MainWindow
         {
             if (IsBotOwnMessage(speaker, text))
                 RememberSelfFromChat(speaker);
-            TryRecordChatMessage(speaker, text, isWhisper || kind == "1");
+            TryRecordChatMessage(speaker, text, isWhisper || kind == "1", joinUserId);
         }
     }
 

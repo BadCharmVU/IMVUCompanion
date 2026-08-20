@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
@@ -11,7 +9,6 @@ namespace IMVUCompanion;
 
 public partial class MainWindow
 {
-    private static readonly string AiSettingsFile = UserDataPaths.GetConfigFile("ai_settings.json");
     private const string AiCommandToken = "!bbot";
     private const string AiMaintenanceReply = "Sorry, my conversation module is under maintenance.";
 
@@ -158,16 +155,30 @@ public partial class MainWindow
         _aiSettings = new AiSettings();
         try
         {
-            if (File.Exists(AiSettingsFile))
+            var data = AppDatabase.LoadAiSettings();
+            if (data.HasRow)
             {
-                string json = File.ReadAllText(AiSettingsFile);
-                var loaded = JsonSerializer.Deserialize<AiSettings>(json);
-                if (loaded != null) _aiSettings = loaded;
+                _aiSettings.SelectedProvider = data.SelectedProvider;
+                _aiSettings.BotDisplayName = data.BotDisplayName;
+                _aiSettings.CompanionAiTrigger = data.CompanionAiTrigger;
+                foreach (var kv in data.Providers)
+                {
+                    if (kv.Value == null) continue;
+                    _aiSettings.Providers[kv.Key] = new ProviderConfig
+                    {
+                        ApiKey = kv.Value.ApiKeyProtected ?? "",
+                        Endpoint = kv.Value.Endpoint,
+                        Model = kv.Value.Model,
+                        Temperature = kv.Value.Temperature,
+                        MaxTokens = kv.Value.MaxTokens,
+                        Enabled = kv.Value.Enabled
+                    };
+                }
             }
         }
         catch (Exception ex) { AppendLog("Load AI settings err: " + ex.Message, LogCategory.Warning); }
 
-        // API keys may be DPAPI-wrapped on disk; keep plaintext only in memory
+        // API keys may be DPAPI-wrapped at rest; keep plaintext only in memory
         bool hadLegacyPlain = false;
         foreach (var kv in _aiSettings.Providers)
         {
@@ -188,7 +199,6 @@ public partial class MainWindow
             !AiProviderNames.Contains(_aiSettings.SelectedProvider, StringComparer.OrdinalIgnoreCase))
             _aiSettings.SelectedProvider = "Grok";
 
-        // One-time upgrade: rewrite file so keys are DPAPI-protected at rest
         if (hadLegacyPlain)
         {
             try { SaveAiSettingsCore(logSuccess: false); }
@@ -232,9 +242,26 @@ public partial class MainWindow
                 };
             }
 
-            Directory.CreateDirectory(UserDataPaths.Root);
-            string json = JsonSerializer.Serialize(disk, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(AiSettingsFile, json);
+            var snap = new AppDatabase.AiSettingsData
+            {
+                SelectedProvider = disk.SelectedProvider,
+                BotDisplayName = disk.BotDisplayName,
+                CompanionAiTrigger = disk.CompanionAiTrigger
+            };
+            foreach (var kv in disk.Providers)
+            {
+                var src = kv.Value;
+                snap.Providers[kv.Key] = new AppDatabase.AiProviderData
+                {
+                    ApiKeyProtected = src.ApiKey,
+                    Endpoint = src.Endpoint,
+                    Model = src.Model,
+                    Temperature = src.Temperature,
+                    MaxTokens = src.MaxTokens,
+                    Enabled = src.Enabled
+                };
+            }
+            AppDatabase.SaveAiSettings(snap);
             if (logSuccess)
                 AppendLog("AI settings saved (API keys protected with Windows DPAPI).", LogCategory.Info);
         }

@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace IMVUCompanion;
 
@@ -13,51 +15,58 @@ internal static class UserDataPaths
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "IMVUCompanion");
 
+    /// <summary>Single SQLite file for welcome, triggers, console, recorder, layout, and prefs.</summary>
+    public static string DatabaseFile
+    {
+        get
+        {
+            Directory.CreateDirectory(Root);
+            return Path.Combine(Root, "companion.db");
+        }
+    }
+
     /// <summary>
-    /// Path for a user-owned config file. Creates the data folder if needed.
-    /// Migrates once from next-to-exe or process CWD (legacy relative paths).
+    /// Path for a leftover/legacy file under the data folder. Does not copy from the exe directory.
     /// </summary>
     public static string GetConfigFile(string fileName)
     {
         Directory.CreateDirectory(Root);
-        string dest = Path.Combine(Root, fileName);
-        if (File.Exists(dest))
-            return dest;
-
-        // Old location: next to the .exe (also wiped by rebuilds / updates)
-        TryMigrate(Path.Combine(AppContext.BaseDirectory, fileName), dest);
-        if (File.Exists(dest))
-            return dest;
-
-        // Legacy: relative path used process working directory
-        try
-        {
-            string cwdPath = Path.GetFullPath(fileName);
-            if (!string.Equals(cwdPath, dest, StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(cwdPath, Path.Combine(AppContext.BaseDirectory, fileName), StringComparison.OrdinalIgnoreCase))
-            {
-                TryMigrate(cwdPath, dest);
-            }
-        }
-        catch
-        {
-            // ignore bad CWD
-        }
-
-        return dest;
+        return Path.Combine(Root, fileName);
     }
 
-    private static void TryMigrate(string source, string dest)
+    public static string LangFile(string stem, string lang)
     {
+        string code = (lang ?? "en").Trim().ToLowerInvariant();
+        if (string.IsNullOrEmpty(code)) code = "en";
+        return GetConfigFile(stem + "-" + code + ".json");
+    }
+
+    public static List<string> ListLangCodes(string stem)
+    {
+        var codes = new List<string>();
         try
         {
-            if (!File.Exists(source) || File.Exists(dest))
-                return;
-            File.Copy(source, dest, overwrite: false);
+            Directory.CreateDirectory(Root);
+            string prefix = stem + "-";
+            foreach (string path in Directory.GetFiles(Root, stem + "-*.json"))
+            {
+                string name = Path.GetFileNameWithoutExtension(path) ?? "";
+                if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                string code = name[prefix.Length..].Trim().ToLowerInvariant();
+                if (code.Length > 0 && !codes.Contains(code, StringComparer.OrdinalIgnoreCase))
+                    codes.Add(code);
+            }
         }
-        catch
-        {
-            // leave dest missing; caller will seed defaults if needed
-        }
+        catch { }
+        return codes;
+    }
+
+    public static void WriteAtomic(string path, string json)
+    {
+        Directory.CreateDirectory(Root);
+        string tmp = path + ".tmp";
+        File.WriteAllText(tmp, json);
+        File.Copy(tmp, path, overwrite: true);
+        try { File.Delete(tmp); } catch { }
     }
 }

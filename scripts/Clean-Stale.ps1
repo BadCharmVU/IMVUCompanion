@@ -102,7 +102,7 @@ Remove-IfExists (Join-Path $root "tools\imvu-js")
 
 # Stale messages/commands next to the OLD relative-path locations (config is AppData now)
 $devDir = Join-Path $root "bin\Release\net8.0-windows10.0.19041.0"
-foreach ($f in @("messages.json", "commands.json", "ai_settings.json", "ui_layout.json")) {
+foreach ($f in @("messages.json", "commands.json", "triggers.json", "console.json", "dm_messages.json", "ai_settings.json", "ui_layout.json")) {
     # Leave them if present — harmless leftovers; optional delete to avoid confusion
     $p = Join-Path $devDir $f
     if (Test-Path $p) {
@@ -127,7 +127,7 @@ Write-Host ""
 Write-Host "YOUR ONLY LOCAL TEST EXE:" -ForegroundColor Green
 Write-Host "  $root\bin\Release\net8.0-windows10.0.19041.0\IMVUCompanion.exe"
 Write-Host "Rebuild/run:  .\scripts\Run-Dev.ps1"
-Write-Host "User config:  %LOCALAPPDATA%\IMVUCompanion\  (messages.json, commands.json)"
+Write-Host "User config:  %LOCALAPPDATA%\IMVUCompanion\companion.db"
 Write-Host "Installers (optional):  $root\release\"
 if (Test-Path (Join-Path $root "release")) {
     Get-ChildItem (Join-Path $root "release") -Filter "*.exe" -ErrorAction SilentlyContinue |

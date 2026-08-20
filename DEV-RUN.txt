@@ -17,8 +17,8 @@ Do NOT run or test from:
 
 User config (welcome messages, commands) is NOT next to the exe.
 It is always:
-  %LOCALAPPDATA%\IMVUCompanion\messages.json
-  %LOCALAPPDATA%\IMVUCompanion\commands.json
+  %LOCALAPPDATA%\IMVUCompanion\companion.db
+  %LOCALAPPDATA%\IMVUCompanion\WebView2\  (IMVU login)
 
 Dev builds show "Dev build" on the update button (no false "update available").
 Installer updates are only for the INSTALLED app on other PCs.

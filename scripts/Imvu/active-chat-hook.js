@@ -1,25 +1,10 @@
 (function () {
+  // Light hook: only wrap IMVU.ServiceProvider.register. No window-property scan
+  // (that competed with IMVU boot and can look like a bot).
   function installOn(w) {
     if (!w) return;
     try {
-      if (w.__imvuCompanionHooksInstalled) {
-        // still try to read already-registered activeChat
-        try {
-          for (const k of Object.getOwnPropertyNames(w)) {
-            try {
-              const v = w[k];
-              if (v && typeof v.get === 'function') {
-                const ac = v.get('activeChat');
-                if (ac) {
-                  w.__imvuCompanionActiveChat = ac;
-                  try { if (w.top) w.top.__imvuCompanionActiveChat = ac; } catch (e) {}
-                }
-              }
-            } catch (e) {}
-          }
-        } catch (e) {}
-        return;
-      }
+      if (w.__imvuCompanionHooksInstalled) return;
       w.__imvuCompanionHooksInstalled = true;
     } catch (e) { return; }
 
@@ -41,49 +26,28 @@
       obj.__imvuCompanionRegHooked = true;
     }
 
-    function scanAndHook() {
+    function tryHookImvu() {
       try {
-        if (w.IMVU) {
-          if (w.IMVU.ServiceProvider && w.IMVU.ServiceProvider.prototype)
-            hookRegisterFn(w.IMVU.ServiceProvider.prototype);
-          if (w.IMVU.serviceProvider) hookRegisterFn(w.IMVU.serviceProvider);
-        }
-      } catch (e) {}
-      try {
-        for (const k of Object.getOwnPropertyNames(w)) {
-          try {
-            const v = w[k];
-            if (!v || typeof v !== 'object') continue;
-            if (typeof v.register === 'function' && typeof v.get === 'function') {
-              hookRegisterFn(v);
-              try {
-                const ac = v.get('activeChat');
-                if (ac) capture('activeChat', ac);
-              } catch (e) {}
-            }
-            if (v.prototype && typeof v.prototype.register === 'function')
-              hookRegisterFn(v.prototype);
-          } catch (e) {}
-        }
-      } catch (e) {}
+        const I = w.IMVU;
+        if (!I) return false;
+        if (I.ServiceProvider && I.ServiceProvider.prototype)
+          hookRegisterFn(I.ServiceProvider.prototype);
+        if (I.serviceProvider) hookRegisterFn(I.serviceProvider);
+        return true;
+      } catch (e) {
+        return false;
+      }
     }
 
-    scanAndHook();
+    if (tryHookImvu()) return;
     let n = 0;
     const t = w.setInterval(function () {
-      scanAndHook();
-      if (++n > 180) w.clearInterval(t);
-    }, 500);
+      if (tryHookImvu() || ++n > 40) w.clearInterval(t);
+    }, 1000);
   }
 
   try {
     window.__imvuCompanionInstallHooks = installOn;
     installOn(window);
-    // same-origin chat iframes
-    try {
-      for (const f of document.querySelectorAll('iframe')) {
-        try { installOn(f.contentWindow); } catch (e) {}
-      }
-    } catch (e) {}
   } catch (e) {}
 })();

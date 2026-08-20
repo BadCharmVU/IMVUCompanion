@@ -43,12 +43,24 @@ crash_*.txt
 *.sln.docstates
 
 # Secrets & local runtime (real config is %LOCALAPPDATA%\IMVUCompanion\)
+companion.db
+**/companion.db
+companion.db-*
 ai_settings.json
 **/ai_settings.json
 messages.json
 commands.json
+triggers.json
+console.json
+dm_messages.json
 **/messages.json
 **/commands.json
+**/triggers.json
+**/console.json
+messages-*.json
+triggers-*.json
+console-*.json
+answering-*.json
 ui_layout.json
 **/ui_layout.json
 

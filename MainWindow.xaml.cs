@@ -213,9 +213,11 @@ public partial class MainWindow : Window
     }
     // Welcome settings: two independent message sets (public/whisper each), random with no consecutive repeat
     private readonly Random _random = new();
-    private static readonly string MessagesFile = UserDataPaths.GetConfigFile("messages.json");
     private string _currentLanguage = "en";
-    private const string DefaultSecondMsg = "Custom 2nd message to the user - Update Me";
+    private const string DefaultSecondMsg = "Sample 2nd Message - Edit Me";
+    private const string DefaultSecondMsgRu = "Пример второго сообщения — отредактируйте меня";
+    private const string DefaultWelcomeMsg = "Sample Welcome Message - Edit Me";
+    private const string DefaultWelcomeMsgRu = "Пример приветствия — отредактируйте меня";
 
     private sealed class WelcomeMsgSet
     {
@@ -233,7 +235,7 @@ public partial class MainWindow : Window
     /// <summary>
     /// False until LoadMessages finishes. Welcome ComboBox/CheckBox fire SelectionChanged/Checked
     /// during InitializeComponent (IsSelected="True") and would otherwise SaveMessages() with
-    /// empty lists — wiping the user's messages.json every startup.
+    /// empty lists — wiping the user's companion.db rows every startup.
     /// </summary>
     private bool _messagesReady;
     /// <summary>False until LoadCommands finishes. Blocks OnClosed/accidental saves of empty defaults.</summary>
@@ -247,7 +249,7 @@ public partial class MainWindow : Window
     // !Commands: category -> language -> list of command/response pairs
     private Dictionary<string, Dictionary<string, List<CommandEntry>>> _commandCategories =
         new Dictionary<string, Dictionary<string, List<CommandEntry>>>(StringComparer.OrdinalIgnoreCase);
-    private static readonly string CommandsFile = UserDataPaths.GetConfigFile("commands.json");
+    private static readonly JsonSerializerOptions ConfigJson = new() { WriteIndented = true };
     private string _currentCommandCategory = "General";
     private string _commandLanguage = "en";
     private string _activeCommandCategory = "General";
@@ -260,10 +262,14 @@ public partial class MainWindow : Window
     private List<CommandRowVm> _commandsFlatFiltered = new();
     private CommandRowVm? _pendingDeleteRow;
     private CommandRowVm? _editingCommandRow;
+    private readonly double _designMinWidth;
+    private readonly double _designMinHeight;
 
     public MainWindow()
     {
         InitializeComponent();
+        _designMinWidth = MinWidth;
+        _designMinHeight = MinHeight;
         Loaded += MainWindow_Loaded;
     }
 
@@ -276,6 +282,7 @@ public partial class MainWindow : Window
 
             // Title-bar X closes the app (same clean shutdown as Exit). Layout is saved on close.
             this.Closing += MainWindow_Closing;
+            AppDatabase.Initialize();
             RestoreUiLayout();
 
             this.Show(); this.Activate();
@@ -1214,194 +1221,101 @@ public partial class MainWindow : Window
         _welcome2 = new WelcomeMsgSet { AsWhisper = true };
         _welcome1Enabled = true;
         _welcome2Enabled = false;
-        bool fileExisted = File.Exists(MessagesFile);
         try
         {
-            if (fileExisted)
-            {
-                string json = File.ReadAllText(MessagesFile);
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-
-                // New format: msg1 / msg2
-                if (root.TryGetProperty("msg1", out var m1) && m1.ValueKind == JsonValueKind.Object)
-                {
-                    if (m1.TryGetProperty("enabled", out var en1) &&
-                        (en1.ValueKind == JsonValueKind.True || en1.ValueKind == JsonValueKind.False))
-                        _welcome1Enabled = en1.GetBoolean();
-                    ReadWelcomeSet(m1, _welcome1);
-                    if (root.TryGetProperty("msg2", out var m2) && m2.ValueKind == JsonValueKind.Object)
-                    {
-                        if (m2.TryGetProperty("enabled", out var en) &&
-                            (en.ValueKind == JsonValueKind.True || en.ValueKind == JsonValueKind.False))
-                            _welcome2Enabled = en.GetBoolean();
-                        ReadWelcomeSet(m2, _welcome2);
-                    }
-                }
-                else
-                {
-                    // Migrate old { events.Welcoming, welcomeExtra }
-                    if (root.TryGetProperty("events", out var eventsEl) && eventsEl.ValueKind == JsonValueKind.Object)
-                    {
-                        string joinEvent = "Welcoming";
-                        if (root.TryGetProperty("joinEvent", out var je) && je.ValueKind == JsonValueKind.String)
-                            joinEvent = je.GetString() ?? "Welcoming";
-                        JsonElement ev = default;
-                        bool hasEv = eventsEl.TryGetProperty(joinEvent, out ev);
-                        if (!hasEv)
-                        {
-                            foreach (var prop in eventsEl.EnumerateObject())
-                            {
-                                ev = prop.Value;
-                                hasEv = true;
-                                break;
-                            }
-                        }
-                        if (hasEv && ev.ValueKind == JsonValueKind.Object)
-                        {
-                            var dict = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(ev.GetRawText());
-                            if (dict != null)
-                                _welcome1.Messages = new Dictionary<string, List<string>>(dict, StringComparer.OrdinalIgnoreCase);
-                        }
-                    }
-                    if (root.TryGetProperty("welcomeExtra", out var we) && we.ValueKind == JsonValueKind.Object)
-                    {
-                        if (we.TryGetProperty("sendExtra", out var se) &&
-                            (se.ValueKind == JsonValueKind.True || se.ValueKind == JsonValueKind.False))
-                            _welcome2Enabled = se.GetBoolean();
-                        if (we.TryGetProperty("asWhisper", out var aw) &&
-                            (aw.ValueKind == JsonValueKind.True || aw.ValueKind == JsonValueKind.False))
-                            _welcome2.AsWhisper = aw.GetBoolean();
-                        if (we.TryGetProperty("messages", out var msgs) && msgs.ValueKind == JsonValueKind.Object)
-                        {
-                            foreach (var prop in msgs.EnumerateObject())
-                            {
-                                string text = prop.Value.GetString() ?? "";
-                                if (string.IsNullOrWhiteSpace(text)) continue;
-                                if (!_welcome2.Messages.ContainsKey(prop.Name))
-                                    _welcome2.Messages[prop.Name] = new List<string>();
-                                _welcome2.Messages[prop.Name].Add(text);
-                            }
-                        }
-                    }
-                }
-            }
+            var data = AppDatabase.LoadWelcome();
+            _welcome1Enabled = data.Msg1Enabled;
+            _welcome1.AsWhisper = data.Msg1AsWhisper;
+            _welcome2Enabled = data.Msg2Enabled;
+            _welcome2.AsWhisper = data.Msg2AsWhisper;
+            _welcome1.Messages = data.Msg1;
+            _welcome2.Messages = data.Msg2;
         }
         catch (Exception ex) { AppendLog("Load messages err: " + ex.Message, LogCategory.Error); }
 
-        // First install only — never wipe an existing file on restart/update.
-        if (!fileExisted)
-        {
-            _welcome1.Messages["en"] = new List<string>
-            {
-                "Welcome {name} to the room!",
-                "Hey {name}, glad you joined!",
-                "Hello {name}!"
-            };
-            _welcome1.Messages["ru"] = new List<string>
-            {
-                "Добро пожаловать {name} в комнату!",
-                "Привет {name}, рад тебя видеть!",
-                "Здравствуй {name}!"
-            };
-            _welcome2.Messages["en"] = new List<string> { DefaultSecondMsg };
-            _welcome2.Messages["ru"] = new List<string> { DefaultSecondMsg };
-            _messagesReady = true; // allow first-time seed write
-            SaveMessages();
-        }
-        else
-        {
-            EnsureWelcomeDefaults();
-        }
+        foreach (string lang in AppLanguageCodes())
+            SeedWelcomeLanguageIfEmpty(lang);
 
-        SetAppLanguage("en", refreshUi: false);
+        SetAppLanguage(string.IsNullOrWhiteSpace(_currentLanguage) ? "en" : _currentLanguage, refreshUi: false);
         _messagesReady = true;
+        SaveMessages();
 
         int n1 = GetWelcomeMessages(_welcome1).Count;
         int n2 = _welcome2Enabled ? GetWelcomeMessages(_welcome2).Count : 0;
-        AppendLog($"Welcome messages loaded ({n1} + {( _welcome2Enabled ? n2.ToString() : "off")}) from %LOCALAPPDATA%\\IMVUCompanion\\messages.json", LogCategory.Info);
+        AppendLog($"Welcome messages loaded ({n1} + {( _welcome2Enabled ? n2.ToString() : "off")}) from companion.db", LogCategory.Info);
     }
 
-    private static void ReadWelcomeSet(JsonElement el, WelcomeMsgSet set)
+    private static IEnumerable<string> AppLanguageCodes()
     {
-        if (el.TryGetProperty("asWhisper", out var aw) &&
-            (aw.ValueKind == JsonValueKind.True || aw.ValueKind == JsonValueKind.False))
-            set.AsWhisper = aw.GetBoolean();
-        else if (el.TryGetProperty("delivery", out var del) && del.ValueKind == JsonValueKind.String)
-            set.AsWhisper = string.Equals(del.GetString(), "whisper", StringComparison.OrdinalIgnoreCase);
-
-        if (el.TryGetProperty("messages", out var msgs) && msgs.ValueKind == JsonValueKind.Object)
-        {
-            var dict = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(msgs.GetRawText());
-            if (dict != null)
-                set.Messages = new Dictionary<string, List<string>>(dict, StringComparer.OrdinalIgnoreCase);
-        }
+        yield return "en";
+        yield return "ru";
     }
 
-    private void EnsureWelcomeDefaults()
+    private static List<string> DefaultWelcome1Texts(string lang) =>
+        string.Equals(lang, "ru", StringComparison.OrdinalIgnoreCase)
+            ? new List<string> { DefaultWelcomeMsgRu }
+            : new List<string> { DefaultWelcomeMsg };
+
+    private static List<string> DefaultWelcome2Texts(string lang) =>
+        string.Equals(lang, "ru", StringComparison.OrdinalIgnoreCase)
+            ? new List<string> { DefaultSecondMsgRu }
+            : new List<string> { DefaultSecondMsg };
+
+    private string DefaultSecondMessageText =>
+        string.Equals(_currentLanguage, "ru", StringComparison.OrdinalIgnoreCase)
+            ? DefaultSecondMsgRu
+            : DefaultSecondMsg;
+
+    private string DefaultWelcomeMessageText =>
+        string.Equals(_currentLanguage, "ru", StringComparison.OrdinalIgnoreCase)
+            ? DefaultWelcomeMsgRu
+            : DefaultWelcomeMsg;
+
+    private void SeedWelcomeLanguageIfEmpty(string lang)
     {
-        if (!_welcome1.Messages.ContainsKey("en") || _welcome1.Messages["en"].Count == 0)
-        {
-            _welcome1.Messages["en"] = new List<string>
-            {
-                "Welcome {name} to the room!",
-                "Hey {name}, glad you joined!",
-                "Hello {name}!"
-            };
-        }
-        if (!_welcome2.Messages.ContainsKey("en") || _welcome2.Messages["en"].Count == 0)
-            _welcome2.Messages["en"] = new List<string> { DefaultSecondMsg };
+        if (!_welcome1.Messages.TryGetValue(lang, out var m1) || m1 == null || m1.Count == 0)
+            _welcome1.Messages[lang] = DefaultWelcome1Texts(lang);
+        if (!_welcome2.Messages.TryGetValue(lang, out var m2) || m2 == null || m2.Count == 0)
+            _welcome2.Messages[lang] = DefaultWelcome2Texts(lang);
     }
 
     private void SaveMessages()
     {
-        // Block premature saves from XAML init (delivery combo IsSelected) before LoadMessages.
         if (!_messagesReady)
             return;
 
         try
         {
-            Directory.CreateDirectory(UserDataPaths.Root);
-            var toSave = new
+            var langs = new HashSet<string>(AppLanguageCodes(), StringComparer.OrdinalIgnoreCase);
+            foreach (string k in _welcome1.Messages.Keys) langs.Add(k);
+            foreach (string k in _welcome2.Messages.Keys) langs.Add(k);
+            foreach (string lang in langs)
+                SeedWelcomeLanguageIfEmpty(lang);
+            AppDatabase.SaveWelcome(new AppDatabase.WelcomeData
             {
-                msg1 = new
-                {
-                    enabled = _welcome1Enabled,
-                    delivery = _welcome1.AsWhisper ? "whisper" : "public",
-                    asWhisper = _welcome1.AsWhisper,
-                    messages = _welcome1.Messages
-                },
-                msg2 = new
-                {
-                    enabled = _welcome2Enabled,
-                    delivery = _welcome2.AsWhisper ? "whisper" : "public",
-                    asWhisper = _welcome2.AsWhisper,
-                    messages = _welcome2.Messages
-                }
-            };
-            string json = JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true });
-            // Atomic write so a crash mid-save cannot leave an empty messages.json
-            string tmp = MessagesFile + ".tmp";
-            File.WriteAllText(tmp, json);
-            File.Copy(tmp, MessagesFile, overwrite: true);
-            try { File.Delete(tmp); } catch { }
+                Msg1Enabled = _welcome1Enabled,
+                Msg1AsWhisper = _welcome1.AsWhisper,
+                Msg2Enabled = _welcome2Enabled,
+                Msg2AsWhisper = _welcome2.AsWhisper,
+                Msg1 = _welcome1.Messages,
+                Msg2 = _welcome2.Messages
+            });
         }
         catch (Exception ex) { AppendLog("Save messages err: " + ex.Message, LogCategory.Error); }
     }
 
     private List<string> GetWelcomeMessages(WelcomeMsgSet set)
     {
+        SeedWelcomeLanguageIfEmpty(_currentLanguage);
         if (set.Messages.TryGetValue(_currentLanguage, out var list) && list.Count > 0)
             return list;
-        if (set.Messages.TryGetValue("en", out var en) && en.Count > 0)
-            return en;
-        return new List<string> { "Welcome {name}!" };
+        return new List<string> { DefaultWelcomeMessageText };
     }
 
     private string PickWelcomeMessage(WelcomeMsgSet set, ref string? lastPick)
     {
         var list = GetWelcomeMessages(set);
-        if (list.Count == 0) return "Welcome {name}!";
+        if (list.Count == 0) return DefaultWelcomeMessageText;
         if (list.Count == 1)
         {
             lastPick = list[0];
@@ -1480,7 +1394,15 @@ public partial class MainWindow : Window
         {
             WelcomeHintMain.Text = "...Greeting";
             WelcomeHintMain.Foreground = HeaderActiveGreen;
-            WelcomeHintTalking.Text = "";
+            if (_welcome2Enabled)
+            {
+                WelcomeHintTalking.Text = " and Talking";
+                WelcomeHintTalking.Foreground = HeaderActiveGreen;
+            }
+            else
+            {
+                WelcomeHintTalking.Text = "";
+            }
         }
         else
         {
@@ -1536,6 +1458,11 @@ public partial class MainWindow : Window
     /// </summary>
     private void SettingsScrollViewer_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
     {
+        if (TryScrollNestedWheel(e.OriginalSource as DependencyObject, e.Delta))
+        {
+            e.Handled = true;
+            return;
+        }
         if (sender is not ScrollViewer sv) return;
         sv.ScrollToVerticalOffset(sv.VerticalOffset - e.Delta / 3.0);
         e.Handled = true;
@@ -1543,9 +1470,118 @@ public partial class MainWindow : Window
 
     private void NestedControl_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
     {
+        if (TryScrollNestedWheel(e.OriginalSource as DependencyObject, e.Delta))
+        {
+            e.Handled = true;
+            return;
+        }
         if (SettingsScrollViewer == null) return;
         SettingsScrollViewer.ScrollToVerticalOffset(SettingsScrollViewer.VerticalOffset - e.Delta / 3.0);
         e.Handled = true;
+    }
+
+    private void MessageList_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    {
+        var origin = e.OriginalSource as DependencyObject ?? sender as DependencyObject;
+        if (TryScrollNestedWheel(origin, e.Delta))
+        {
+            e.Handled = true;
+            return;
+        }
+        if (SettingsScrollViewer == null) return;
+        SettingsScrollViewer.ScrollToVerticalOffset(SettingsScrollViewer.VerticalOffset - e.Delta / 3.0);
+        e.Handled = true;
+    }
+
+    private static DependencyObject? WheelParent(DependencyObject d)
+    {
+        if (d is Visual || d is System.Windows.Media.Media3D.Visual3D)
+            return VisualTreeHelper.GetParent(d);
+        return LogicalTreeHelper.GetParent(d);
+    }
+
+    private bool TryScrollNestedWheel(DependencyObject? origin, int delta)
+    {
+        for (var d = origin; d != null && d != SettingsScrollViewer; d = WheelParent(d))
+        {
+            ScrollViewer? sv = d as ScrollViewer;
+            if (sv == null && (d is ListBox || d is ItemsControl))
+                sv = FindDescendantScrollViewer(d);
+            if (sv == null || sv == SettingsScrollViewer) continue;
+            if (sv.ScrollableHeight <= 0.5) continue;
+            bool down = delta < 0;
+            bool can = down ? sv.VerticalOffset < sv.ScrollableHeight - 0.5 : sv.VerticalOffset > 0.5;
+            if (!can) continue;
+            sv.ScrollToVerticalOffset(Math.Clamp(sv.VerticalOffset - delta / 3.0, 0, sv.ScrollableHeight));
+            return true;
+        }
+        return false;
+    }
+
+    private static ScrollViewer? FindDescendantScrollViewer(DependencyObject? root)
+    {
+        if (root == null) return null;
+        if (root is ScrollViewer sv) return sv;
+        int n = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < n; i++)
+        {
+            var hit = FindDescendantScrollViewer(VisualTreeHelper.GetChild(root, i));
+            if (hit != null) return hit;
+        }
+        return null;
+    }
+
+    private EventHandler? _smoothScrollTick;
+
+    private void SmoothScrollSettingsTo(double target)
+    {
+        if (SettingsScrollViewer == null) return;
+        double start = SettingsScrollViewer.VerticalOffset;
+        double max = Math.Max(0, SettingsScrollViewer.ScrollableHeight);
+        target = Math.Clamp(target, 0, max);
+        if (Math.Abs(target - start) < 1.5)
+        {
+            SettingsScrollViewer.ScrollToVerticalOffset(target);
+            return;
+        }
+        if (_smoothScrollTick != null)
+            CompositionTarget.Rendering -= _smoothScrollTick;
+        var sw = Stopwatch.StartNew();
+        const double ms = 280;
+        EventHandler tick = null!;
+        tick = (_, _) =>
+        {
+            double t = Math.Min(1, sw.Elapsed.TotalMilliseconds / ms);
+            double ease = 1 - Math.Pow(1 - t, 3);
+            SettingsScrollViewer.ScrollToVerticalOffset(start + (target - start) * ease);
+            if (t >= 1)
+            {
+                CompositionTarget.Rendering -= tick;
+                if (_smoothScrollTick == tick) _smoothScrollTick = null;
+            }
+        };
+        _smoothScrollTick = tick;
+        CompositionTarget.Rendering += tick;
+    }
+
+    private void ScrollSectionIntoView(Expander ex)
+    {
+        if (SettingsScrollViewer == null || ex == null) return;
+        SettingsScrollViewer.UpdateLayout();
+        ex.UpdateLayout();
+        System.Windows.Point p = ex.TranslatePoint(new System.Windows.Point(0, 0), SettingsScrollViewer);
+        double top = SettingsScrollViewer.VerticalOffset + p.Y;
+        double bottom = top + ex.ActualHeight;
+        double viewTop = SettingsScrollViewer.VerticalOffset;
+        double viewH = SettingsScrollViewer.ViewportHeight;
+        double viewBot = viewTop + viewH;
+        if (top >= viewTop - 2 && bottom <= viewBot + 2) return;
+        double target = ex.ActualHeight >= viewH - 8
+            ? top
+            : bottom - viewH;
+        if (top < viewTop)
+            target = top;
+        SmoothScrollSettingsTo(target);
     }
 
     /// <summary>Replace known placeholders in templates (extensible for future calls).</summary>
@@ -1917,21 +1953,27 @@ public partial class MainWindow : Window
     /// <summary>Create empty category from CategoryEditorModal only (no trigger).</summary>
     private bool TryCommitAddCategoryOnlyFromEditor()
     {
-        string newCat = CategoryNameEditBox?.Text?.Trim() ?? "";
+        string newCat = FormatCategoryName(CategoryNameEditBox?.Text);
         if (string.IsNullOrEmpty(newCat))
         {
             SetModalFieldError(CategoryNameEditBox, true);
             ShowBotSettingsError("Missing category name", "Enter a name for the new category.");
             return false;
         }
-        if (_commandCategories.ContainsKey(newCat))
+        if (CategoryExistsForCurrentLanguage(newCat))
         {
             SetModalFieldError(CategoryNameEditBox, true);
             ShowBotSettingsError("Category exists", $"A category named '{newCat}' already exists.");
             return false;
         }
 
-        _commandCategories[newCat] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+        if (!_commandCategories.TryGetValue(newCat, out var langMap) || langMap == null)
+        {
+            langMap = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+            _commandCategories[newCat] = langMap;
+        }
+        if (!langMap.ContainsKey(_commandLanguage))
+            langMap[_commandLanguage] = new List<CommandEntry>();
         var s = new CategorySettings
         {
             ColorHex = _pendingNewCategoryColor,
@@ -1967,7 +2009,7 @@ public partial class MainWindow : Window
         string oldName = _categoryEditorOriginalName;
         if (string.IsNullOrEmpty(oldName))
             oldName = _currentCommandCategory;
-        string newName = CategoryNameEditBox?.Text?.Trim() ?? "";
+        string newName = FormatCategoryName(CategoryNameEditBox?.Text);
         if (string.IsNullOrEmpty(newName))
         {
             SetModalFieldError(CategoryNameEditBox, true);
@@ -1990,17 +2032,25 @@ public partial class MainWindow : Window
 
         if (!string.Equals(newName, oldName, StringComparison.OrdinalIgnoreCase))
         {
-            if (_commandCategories.ContainsKey(newName))
+            if (CategoryExistsForCurrentLanguage(newName))
             {
                 SetModalFieldError(CategoryNameEditBox, true);
                 ShowBotSettingsError("Category exists", $"A category named '{newName}' already exists.");
                 return false;
             }
-            if (!_commandCategories.ContainsKey(oldName))
+            if (!_commandCategories.TryGetValue(oldName, out var oldLangs) || oldLangs == null)
                 return false;
-            var data = _commandCategories[oldName];
-            _commandCategories.Remove(oldName);
-            _commandCategories[newName] = data;
+            if (!oldLangs.TryGetValue(_commandLanguage, out var movedList))
+                movedList = new List<CommandEntry>();
+            oldLangs.Remove(_commandLanguage);
+            if (oldLangs.Count == 0)
+                _commandCategories.Remove(oldName);
+            if (!_commandCategories.TryGetValue(newName, out var newLangs) || newLangs == null)
+            {
+                newLangs = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+                _commandCategories[newName] = newLangs;
+            }
+            newLangs[_commandLanguage] = movedList;
             MigrateCategorySettingsKeys(oldName, newName);
             if (string.Equals(_activeCommandCategory, oldName, StringComparison.OrdinalIgnoreCase))
                 _activeCommandCategory = newName;
@@ -2149,6 +2199,7 @@ public partial class MainWindow : Window
         var edit = which == 1 ? Welcome1EditBox : Welcome2EditBox;
         if (listBox == null || edit == null) return;
 
+        SeedWelcomeLanguageIfEmpty(_currentLanguage);
         if (!set.Messages.ContainsKey(_currentLanguage))
             set.Messages[_currentLanguage] = new List<string>();
         var list = set.Messages[_currentLanguage];
@@ -2161,8 +2212,43 @@ public partial class MainWindow : Window
     private void SetAppLanguage(string lang, bool refreshUi = true)
     {
         if (string.IsNullOrEmpty(lang)) return;
+        if (!string.IsNullOrEmpty(_commandLanguage) && !string.IsNullOrEmpty(_currentCommandCategory))
+            _activeCategoryByLang[_commandLanguage] = _currentCommandCategory;
+        if (_dmReady)
+            SyncConsoleViewToStore();
+        if (_recorderReady)
+            SyncReceiptViewToStore();
         _currentLanguage = lang;
         _commandLanguage = lang;
+        SeedWelcomeLanguageIfEmpty(lang);
+        SeedTriggerLanguageIfEmpty(lang);
+        BindCategorySettingsToLanguage(lang);
+        if (_commandsReady)
+        {
+            if (!_activeCategoryByLang.TryGetValue(lang, out var cat) ||
+                string.IsNullOrEmpty(cat) ||
+                !CategoryExistsForCurrentLanguage(cat))
+                cat = CategoriesForLanguage(lang).FirstOrDefault() ?? "General";
+            _currentCommandCategory = cat;
+            _activeCommandCategory = cat;
+            _activeCategoryByLang[lang] = cat;
+            PopulateCategoryCombo();
+            PopulateCategoryFilterCombo();
+        }
+        if (_messagesReady) SaveMessages();
+        if (_commandsReady) SaveCommands();
+        SaveUiLayout();
+        if (_dmReady)
+        {
+            SeedConsoleLanguageIfEmpty(lang);
+            ApplyConsoleLanguage(lang);
+            SaveDmMessages();
+        }
+        if (_recorderReady)
+        {
+            ApplyReceiptLanguage(lang);
+            SaveRecorderSettings();
+        }
         if (refreshUi)
         {
             RefreshWelcomeList(1);
@@ -2294,7 +2380,7 @@ public partial class MainWindow : Window
     {
         var list = EnsureLangList(_welcome1);
         string text = Welcome1EditBox?.Text?.Trim() ?? "";
-        if (string.IsNullOrEmpty(text)) text = "New message for {name}";
+        if (string.IsNullOrEmpty(text)) text = DefaultWelcomeMessageText;
         if (!list.Contains(text))
         {
             list.Add(text);
@@ -2330,7 +2416,7 @@ public partial class MainWindow : Window
     {
         var list = EnsureLangList(_welcome2);
         string text = Welcome2EditBox?.Text?.Trim() ?? "";
-        if (string.IsNullOrEmpty(text)) text = DefaultSecondMsg;
+        if (string.IsNullOrEmpty(text)) text = DefaultSecondMessageText;
         if (!list.Contains(text))
         {
             list.Add(text);
@@ -2363,157 +2449,144 @@ public partial class MainWindow : Window
     }
 
     // ===== !Commands management (category -> lang -> list<CommandEntry>) =====
-    /// <summary>First-install samples only (!hi Social, !help/!stats General, !rules Info).</summary>
-    private static Dictionary<string, Dictionary<string, List<CommandEntry>>> CreateSampleCommandCategories()
+    private static bool IsRussianLang(string lang) =>
+        string.Equals(lang, "ru", StringComparison.OrdinalIgnoreCase);
+
+    private static (string general, string info) DefaultCategoryNames(string lang) =>
+        IsRussianLang(lang) ? ("Общее", "Инфо") : ("General", "Info");
+
+    private static List<CommandEntry> DefaultGeneralTriggers(string lang)
     {
-        return new Dictionary<string, Dictionary<string, List<CommandEntry>>>(StringComparer.OrdinalIgnoreCase)
+        if (IsRussianLang(lang))
         {
-            ["General"] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase)
+            return new List<CommandEntry>
             {
-                ["en"] = new List<CommandEntry>
-                {
-                    new CommandEntry { Command = "!help", Response = "Try !hi, !stats, or !rules." },
-                    new CommandEntry { Command = "!stats", Response = "{session_stats}" }
-                }
-            },
-            ["Social"] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["en"] = new List<CommandEntry>
-                {
-                    new CommandEntry { Command = "!hi", Response = "Hello {name}! Welcome!" }
-                }
-            },
-            ["Info"] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["en"] = new List<CommandEntry>
-                {
-                    new CommandEntry { Command = "!rules", Response = "Be kind and have fun, {name}." }
-                }
-            }
+                new CommandEntry { Command = "!hi", Response = "Пример ответа на триггер — отредактируйте меня" },
+                new CommandEntry { Command = "!привет", Response = "Пример второго ответа — отредактируйте меня" }
+            };
+        }
+        return new List<CommandEntry>
+        {
+            new CommandEntry { Command = "!hi", Response = "Sample trigger reply - Edit Me" },
+            new CommandEntry { Command = "!hello", Response = "Sample 2nd trigger reply - Edit Me" }
         };
+    }
+
+    private static List<CommandEntry> DefaultInfoTriggers(string lang)
+    {
+        if (IsRussianLang(lang))
+        {
+            return new List<CommandEntry>
+            {
+                new CommandEntry { Command = "!info", Response = "Пример информационного ответа — отредактируйте меня" },
+                new CommandEntry { Command = "!помощь", Response = "Пример второго информационного ответа — отредактируйте меня" }
+            };
+        }
+        return new List<CommandEntry>
+        {
+            new CommandEntry { Command = "!info", Response = "Sample info reply - Edit Me" },
+            new CommandEntry { Command = "!help", Response = "Sample 2nd info reply - Edit Me" }
+        };
+    }
+
+    private void PutLangCategory(string category, string lang, List<CommandEntry> entries, string colorHex)
+    {
+        if (!_commandCategories.ContainsKey(category))
+            _commandCategories[category] = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+        _commandCategories[category][lang] = entries;
+        if (!_settingsByLang.TryGetValue(lang, out var bag) || bag == null)
+        {
+            bag = new Dictionary<string, CategorySettings>(StringComparer.OrdinalIgnoreCase);
+            _settingsByLang[lang] = bag;
+        }
+        bag[category] = new CategorySettings { ColorHex = colorHex };
+    }
+
+    private void SeedTriggerLanguageIfEmpty(string lang)
+    {
+        if (CategoriesForLanguage(lang).Any()) return;
+        var (general, info) = DefaultCategoryNames(lang);
+        PutLangCategory(general, lang, DefaultGeneralTriggers(lang), "#4ADE80");
+        PutLangCategory(info, lang, DefaultInfoTriggers(lang), "#38BDF8");
+        if (!_activeCategoryByLang.ContainsKey(lang))
+            _activeCategoryByLang[lang] = general;
+        EnsureSettingsForAllCategories();
     }
 
     private void LoadCommands()
     {
         _commandsReady = false;
         _commandCategories = new Dictionary<string, Dictionary<string, List<CommandEntry>>>(StringComparer.OrdinalIgnoreCase);
+        _settingsByLang.Clear();
+        _activeCategoryByLang.Clear();
         _categorySettings = new Dictionary<string, CategorySettings>(StringComparer.OrdinalIgnoreCase);
         _activeCommandCategory = "General";
         _listenToChat = true;
-        bool fileExisted = File.Exists(CommandsFile);
-        bool needsMigrateSave = false;
         try
         {
-            if (fileExisted)
+            var data = AppDatabase.LoadTriggers();
+            _listenToChat = data.ListenToChat;
+            if (!string.IsNullOrWhiteSpace(data.ActiveCategory))
+                _activeCommandCategory = data.ActiveCategory;
+            foreach (var kv in data.ActiveCategoryByLang)
             {
-                string json = File.ReadAllText(CommandsFile);
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-
-                int schema = 1;
-                if (root.TryGetProperty("schemaVersion", out var sv) && sv.ValueKind == JsonValueKind.Number)
-                    schema = sv.GetInt32();
-
-                if (root.TryGetProperty("activeCategory", out var ac) && ac.ValueKind == JsonValueKind.String)
-                    _activeCommandCategory = ac.GetString() ?? "General";
-                if (root.TryGetProperty("listenToChat", out var lc) &&
-                    (lc.ValueKind == JsonValueKind.True || lc.ValueKind == JsonValueKind.False))
-                    _listenToChat = lc.GetBoolean();
-
-                if (schema >= 2 &&
-                    root.TryGetProperty("categories", out var catsV2) &&
-                    catsV2.ValueKind == JsonValueKind.Object)
-                {
-                    LoadCommandsSchemaV2(catsV2);
-                }
-                else if (root.TryGetProperty("categories", out var catsEl) && catsEl.ValueKind == JsonValueKind.Object)
-                {
-                    // v1: raw category -> lang -> entries
-                    var loaded = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, List<CommandEntry>>>>(catsEl.GetRawText());
-                    if (loaded != null)
-                        _commandCategories = NormalizeCommandCategories(loaded);
-                    needsMigrateSave = true;
-                }
+                if (!string.IsNullOrWhiteSpace(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value))
+                    _activeCategoryByLang[kv.Key] = kv.Value;
             }
-        }
-        catch (Exception ex) { AppendLog("Load commands err: " + ex.Message, LogCategory.Error); }
-
-        if (!fileExisted)
-        {
-            _commandCategories = CreateSampleCommandCategories();
-            _activeCommandCategory = "General";
-            _listenToChat = true;
-            EnsureSettingsForAllCategories();
-            _commandsReady = true;
-            SaveCommands();
-            AppendLog("Trigger Settings: first run — sample commands written to %LOCALAPPDATA%\\IMVUCompanion\\commands.json", LogCategory.Info);
-        }
-        else
-        {
-            EnsureSettingsForAllCategories();
-            int total = CountAllCommandsAcrossLanguages();
-            AppendLog($"Trigger Settings loaded (schema v{(needsMigrateSave ? 1 : 2)} → {CommandsSchemaVersion}, {total} command(s), {_commandCategories.Count} categor(ies))", LogCategory.Info);
-            if (needsMigrateSave)
+            foreach (var catKv in data.Categories)
             {
-                _commandsReady = true;
-                SaveCommands();
-                AppendLog("Trigger Settings migrated commands.json to schema v2.", LogCategory.Info);
-            }
-        }
-
-        if (string.IsNullOrEmpty(_activeCommandCategory) || !_commandCategories.ContainsKey(_activeCommandCategory))
-            _activeCommandCategory = _commandCategories.Keys.FirstOrDefault() ?? "General";
-
-        _currentCommandCategory = _activeCommandCategory;
-        _commandsReady = true;
-    }
-
-    private void LoadCommandsSchemaV2(JsonElement catsEl)
-    {
-        var cats = new Dictionary<string, Dictionary<string, List<CommandEntry>>>(StringComparer.OrdinalIgnoreCase);
-        var settings = new Dictionary<string, CategorySettings>(StringComparer.OrdinalIgnoreCase);
-        foreach (var prop in catsEl.EnumerateObject())
-        {
-            string name = prop.Name.Trim();
-            if (string.IsNullOrEmpty(name)) continue;
-            var langs = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
-            if (prop.Value.TryGetProperty("languages", out var langEl) && langEl.ValueKind == JsonValueKind.Object)
-            {
-                var loaded = JsonSerializer.Deserialize<Dictionary<string, List<CommandEntry>>>(langEl.GetRawText());
-                if (loaded != null)
+                if (string.IsNullOrWhiteSpace(catKv.Key) || catKv.Value == null) continue;
+                var langs = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var langKv in catKv.Value)
                 {
-                    foreach (var lk in loaded)
+                    if (langKv.Value == null || langKv.Value.Count == 0) continue;
+                    langs[langKv.Key] = langKv.Value.Select(e => new CommandEntry
                     {
-                        if (lk.Value == null || lk.Value.Count == 0) continue;
-                        langs[lk.Key] = lk.Value;
-                    }
+                        Command = e.Command,
+                        Response = e.Response
+                    }).ToList();
                 }
+                if (langs.Count > 0)
+                    _commandCategories[catKv.Key] = langs;
             }
-            cats[name] = langs;
-            var cs = new CategorySettings();
-            if (prop.Value.TryGetProperty("settings", out var setEl) && setEl.ValueKind == JsonValueKind.Object)
+            foreach (var langKv in data.SettingsByLang)
             {
-                if (setEl.TryGetProperty("allowRepeatTriggers", out var ar) &&
-                    (ar.ValueKind == JsonValueKind.True || ar.ValueKind == JsonValueKind.False))
-                    cs.AllowRepeatTriggers = ar.GetBoolean();
-                if (setEl.TryGetProperty("cooldownSeconds", out var cd) && cd.ValueKind == JsonValueKind.Number)
-                    cs.CooldownSeconds = Math.Clamp(cd.GetInt32(), 1, 3600);
-                // Prefer useNamePrefix; legacy suppressNamePrefix means the opposite
-                if (setEl.TryGetProperty("useNamePrefix", out var un) &&
-                    (un.ValueKind == JsonValueKind.True || un.ValueKind == JsonValueKind.False))
-                    cs.UseNamePrefix = un.GetBoolean();
-                else if (setEl.TryGetProperty("suppressNamePrefix", out var sn) &&
-                    (sn.ValueKind == JsonValueKind.True || sn.ValueKind == JsonValueKind.False))
-                    cs.UseNamePrefix = !sn.GetBoolean();
-                if (setEl.TryGetProperty("colorHex", out var ch) && ch.ValueKind == JsonValueKind.String)
-                    cs.ColorHex = ch.GetString() ?? cs.ColorHex;
+                var bag = new Dictionary<string, CategorySettings>(StringComparer.OrdinalIgnoreCase);
+                foreach (var catKv in langKv.Value)
+                {
+                    if (catKv.Value == null) continue;
+                    bag[catKv.Key] = new CategorySettings
+                    {
+                        AllowRepeatTriggers = catKv.Value.AllowRepeatTriggers,
+                        CooldownSeconds = catKv.Value.CooldownSeconds,
+                        UseNamePrefix = catKv.Value.UseNamePrefix,
+                        ColorHex = catKv.Value.ColorHex
+                    };
+                }
+                _settingsByLang[langKv.Key] = bag;
             }
-            if (string.IsNullOrWhiteSpace(cs.ColorHex))
-                cs.ColorHex = NextCategoryColor();
-            settings[name] = cs;
+            _commandCategories = NormalizeCommandCategories(_commandCategories);
         }
-        _commandCategories = cats;
-        _categorySettings = settings;
+        catch (Exception ex) { AppendLog("Load triggers err: " + ex.Message, LogCategory.Error); }
+
+        foreach (string lang in AppLanguageCodes())
+            SeedTriggerLanguageIfEmpty(lang);
+        EnsureSettingsForAllCategories();
+
+        BindCategorySettingsToLanguage(_commandLanguage);
+        if (_activeCategoryByLang.TryGetValue(_commandLanguage, out var savedCat) &&
+            !string.IsNullOrEmpty(savedCat) &&
+            CategoryExistsForCurrentLanguage(savedCat))
+            _activeCommandCategory = savedCat;
+        else if (string.IsNullOrEmpty(_activeCommandCategory) ||
+                 !CategoryExistsForCurrentLanguage(_activeCommandCategory))
+            _activeCommandCategory = CategoriesForLanguage(_commandLanguage).FirstOrDefault() ?? "General";
+        _currentCommandCategory = _activeCommandCategory;
+        _activeCategoryByLang[_commandLanguage] = _currentCommandCategory;
+        _commandsReady = true;
+        SaveCommands();
+        int total = CountAllCommandsAcrossLanguages();
+        AppendLog($"Trigger Settings loaded ({total} trigger(s), {_commandCategories.Count} categor(ies))", LogCategory.Info);
     }
 
     /// <summary>Case-insensitive maps + drop empty language lists left by older builds.</summary>
@@ -2539,13 +2612,11 @@ public partial class MainWindow : Window
 
     private void SaveCommands()
     {
-        // Same guard as SaveMessages — never flush empty defaults over user data before load.
         if (!_commandsReady)
             return;
 
         try
         {
-            Directory.CreateDirectory(UserDataPaths.Root);
             if (!string.IsNullOrEmpty(_currentCommandCategory))
                 _activeCommandCategory = _currentCommandCategory;
 
@@ -2553,37 +2624,74 @@ public partial class MainWindow : Window
             _commandCategories = clean;
             EnsureSettingsForAllCategories();
 
-            var catsOut = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-            foreach (var catKv in _commandCategories)
+            if (!string.IsNullOrEmpty(_commandLanguage) && !string.IsNullOrEmpty(_currentCommandCategory))
+                _activeCategoryByLang[_commandLanguage] = _currentCommandCategory;
+            _settingsByLang[_commandLanguage] = _categorySettings;
+
+            var langs = new HashSet<string>(AppLanguageCodes(), StringComparer.OrdinalIgnoreCase);
+            foreach (string k in _settingsByLang.Keys) langs.Add(k);
+            foreach (var cat in _commandCategories.Values)
             {
-                var s = GetOrCreateCategorySettings(catKv.Key);
-                catsOut[catKv.Key] = new
+                foreach (string k in cat.Keys) langs.Add(k);
+            }
+            foreach (string lang in langs)
+            {
+                SeedTriggerLanguageIfEmpty(lang);
+                if (!_settingsByLang.TryGetValue(lang, out var bag) || bag == null)
+                    bag = new Dictionary<string, CategorySettings>(StringComparer.OrdinalIgnoreCase);
+                foreach (var catKv in _commandCategories)
                 {
-                    settings = new
+                    if (catKv.Value == null || !catKv.Value.ContainsKey(lang)) continue;
+                    if (!bag.TryGetValue(catKv.Key, out var s) || s == null)
                     {
-                        allowRepeatTriggers = s.AllowRepeatTriggers,
-                        cooldownSeconds = s.CooldownSeconds,
-                        useNamePrefix = s.UseNamePrefix,
-                        colorHex = s.ColorHex
-                    },
-                    languages = catKv.Value
-                };
+                        s = new CategorySettings { ColorHex = NextCategoryColor() };
+                        bag[catKv.Key] = s;
+                    }
+                }
+                _settingsByLang[lang] = bag;
             }
 
-            var toSave = new
+            var snap = new AppDatabase.TriggerData
             {
-                schemaVersion = CommandsSchemaVersion,
-                listenToChat = _listenToChat,
-                activeCategory = _activeCommandCategory,
-                categories = catsOut
+                ListenToChat = _listenToChat,
+                ActiveCategory = _activeCommandCategory,
+                ActiveCategoryByLang = new Dictionary<string, string>(_activeCategoryByLang, StringComparer.OrdinalIgnoreCase)
             };
-            string json = JsonSerializer.Serialize(toSave, new JsonSerializerOptions { WriteIndented = true });
-            string tmp = CommandsFile + ".tmp";
-            File.WriteAllText(tmp, json);
-            File.Copy(tmp, CommandsFile, overwrite: true);
-            try { File.Delete(tmp); } catch { }
+            foreach (var catKv in _commandCategories)
+            {
+                if (catKv.Value == null) continue;
+                var langsMap = new Dictionary<string, List<AppDatabase.TriggerEntryData>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var langKv in catKv.Value)
+                {
+                    if (langKv.Value == null || langKv.Value.Count == 0) continue;
+                    langsMap[langKv.Key] = langKv.Value.Select(e => new AppDatabase.TriggerEntryData
+                    {
+                        Command = e.Command,
+                        Response = e.Response
+                    }).ToList();
+                }
+                if (langsMap.Count > 0)
+                    snap.Categories[catKv.Key] = langsMap;
+            }
+            foreach (var langKv in _settingsByLang)
+            {
+                var bag = new Dictionary<string, AppDatabase.CategorySettingsData>(StringComparer.OrdinalIgnoreCase);
+                foreach (var catKv in langKv.Value)
+                {
+                    if (catKv.Value == null) continue;
+                    bag[catKv.Key] = new AppDatabase.CategorySettingsData
+                    {
+                        AllowRepeatTriggers = catKv.Value.AllowRepeatTriggers,
+                        CooldownSeconds = catKv.Value.CooldownSeconds,
+                        UseNamePrefix = catKv.Value.UseNamePrefix,
+                        ColorHex = catKv.Value.ColorHex
+                    };
+                }
+                snap.SettingsByLang[langKv.Key] = bag;
+            }
+            AppDatabase.SaveTriggers(snap);
         }
-        catch (Exception ex) { AppendLog("Save commands err: " + ex.Message, LogCategory.Error); }
+        catch (Exception ex) { AppendLog("Save triggers err: " + ex.Message, LogCategory.Error); }
     }
 
     /// <summary>Get or create the command list for category + current UI language (mutations only).</summary>
@@ -2641,13 +2749,41 @@ public partial class MainWindow : Window
             CommandEditBox.Text = word;
     }
 
+    private static string FormatCategoryName(string? raw)
+    {
+        string s = (raw ?? "").Trim();
+        if (s.Length == 0) return s;
+        bool anyLetter = false;
+        bool allUpper = true;
+        foreach (char c in s)
+        {
+            if (!char.IsLetter(c)) continue;
+            anyLetter = true;
+            if (!char.IsUpper(c)) allUpper = false;
+        }
+        if (anyLetter && allUpper) return s;
+        return char.ToUpperInvariant(s[0]) + s[1..];
+    }
+
+    private IEnumerable<string> CategoriesForLanguage(string lang)
+    {
+        foreach (var kv in _commandCategories)
+        {
+            if (kv.Value != null && kv.Value.ContainsKey(lang))
+                yield return kv.Key;
+        }
+    }
+
+    private bool CategoryExistsForCurrentLanguage(string name) =>
+        _commandCategories.TryGetValue(name, out var langs) && langs != null && langs.ContainsKey(_commandLanguage);
+
     private void PopulateCategoryCombo()
     {
         if (CommandCategoryCombo == null) return;
         string? keep = (CommandCategoryCombo.SelectedItem as ComboBoxItem)?.Content?.ToString()
                        ?? _currentCommandCategory;
         CommandCategoryCombo.Items.Clear();
-        foreach (var key in _commandCategories.Keys)
+        foreach (var key in CategoriesForLanguage(_commandLanguage))
             CommandCategoryCombo.Items.Add(new ComboBoxItem { Content = key });
         if (CommandCategoryCombo.Items.Count == 0) return;
         // Always show a real category (never blank)
@@ -2681,7 +2817,7 @@ public partial class MainWindow : Window
         {
             CommandCategoryFilterCombo.Items.Clear();
             CommandCategoryFilterCombo.Items.Add(new ComboBoxItem { Content = "All categories", Tag = "" });
-            foreach (var key in _commandCategories.Keys)
+            foreach (var key in CategoriesForLanguage(_commandLanguage))
                 CommandCategoryFilterCombo.Items.Add(new ComboBoxItem { Content = key, Tag = key });
             SelectCategoryFilterComboCore(prevTag);
         }
@@ -4398,6 +4534,8 @@ return results.slice(-maxLines);
         _isShuttingDown = true;
         try
         {
+            await ShowExitSplashAndHoldAsync();
+
             try { SaveRecorderSettings(); } catch { }
             try { SaveDmMessages(); } catch { }
             AppendLog(reason + " — stopping companion and leaving room…", LogCategory.Info);
@@ -4406,6 +4544,8 @@ return results.slice(-maxLines);
 
             await LeaveImvuRoomAsync();
             try { SaveUiLayout(); } catch { }
+            CoverImvuSurface();
+            await WaitExitSplashMinAsync();
 
             _exiting = true;
             _botSessionStartedAt = null;
@@ -4420,8 +4560,6 @@ return results.slice(-maxLines);
             try { Environment.Exit(0); } catch { }
         }
     }
-
-    private static readonly string UiLayoutFile = UserDataPaths.GetConfigFile("ui_layout.json");
 
     private sealed class UiLayoutState
     {
@@ -4441,6 +4579,7 @@ return results.slice(-maxLines);
         public bool DmSettingsExpanded { get; set; }
         public bool AiSettingsExpanded { get; set; }
         public bool AiProvidersExpanded { get; set; }
+        public string Language { get; set; } = "en";
     }
 
     private bool _applyingExpanderLayout;
@@ -4492,36 +4631,65 @@ return results.slice(-maxLines);
                     ? _dmSettingsExpandedPref : DmSettingsExpander?.IsExpanded == true,
                 AiSettingsExpanded = false,
                 AiProvidersExpanded = false,
+                Language = string.IsNullOrWhiteSpace(_currentLanguage) ? "en" : _currentLanguage,
             };
 
-            File.WriteAllText(UiLayoutFile, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+            AppDatabase.SaveUiLayout(ToUiLayoutData(state));
         }
         catch { }
     }
+
+    private static AppDatabase.UiLayoutData ToUiLayoutData(UiLayoutState state) => new()
+    {
+        HasRow = true,
+        Width = state.Width,
+        Height = state.Height,
+        CenterX = state.CenterX,
+        CenterY = state.CenterY,
+        WindowState = state.WindowState,
+        LeftColRatio = state.LeftColRatio,
+        LeftColWidth = state.LeftColWidth,
+        RightColWidth = state.RightColWidth,
+        ActivityLogHeight = state.ActivityLogHeight,
+        WelcomeExpanded = state.WelcomeExpanded,
+        BotSettingsExpanded = state.BotSettingsExpanded,
+        RecorderExpanded = state.RecorderExpanded,
+        DmSettingsExpanded = state.DmSettingsExpanded,
+        Language = string.IsNullOrWhiteSpace(state.Language) ? "en" : state.Language
+    };
+
+    private static UiLayoutState FromUiLayoutData(AppDatabase.UiLayoutData d) => new()
+    {
+        Width = d.Width,
+        Height = d.Height,
+        CenterX = d.CenterX,
+        CenterY = d.CenterY,
+        WindowState = d.WindowState,
+        LeftColRatio = d.LeftColRatio,
+        LeftColWidth = d.LeftColWidth,
+        RightColWidth = d.RightColWidth,
+        ActivityLogHeight = d.ActivityLogHeight,
+        WelcomeExpanded = d.WelcomeExpanded,
+        BotSettingsExpanded = d.BotSettingsExpanded,
+        RecorderExpanded = d.RecorderExpanded,
+        DmSettingsExpanded = d.DmSettingsExpanded,
+        Language = d.Language
+    };
 
     private void RestoreUiLayout()
     {
         try
         {
             UiLayoutState? state = null;
-            if (File.Exists(UiLayoutFile))
-                state = JsonSerializer.Deserialize<UiLayoutState>(File.ReadAllText(UiLayoutFile));
+            var stored = AppDatabase.LoadUiLayout();
+            if (stored.HasRow)
+                state = FromUiLayoutData(stored);
 
             double w = state is { Width: > 200 } ? state.Width : Width;
             double h = state is { Height: > 200 } ? state.Height : Height;
-            w = Math.Max(w, MinWidth);
-            h = Math.Max(h, MinHeight);
-
-            // Last monitor via saved center point; always open centered on that monitor's work area
-            double cx = state?.CenterX ?? (SystemParameters.PrimaryScreenWidth / 2);
-            double cy = state?.CenterY ?? (SystemParameters.PrimaryScreenHeight / 2);
-            var wa = GetMonitorWorkAreaFromPoint(cx, cy);
-
-            Width = Math.Min(w, wa.Width);
-            Height = Math.Min(h, wa.Height);
-            Left = wa.X + (wa.Width - Width) / 2;
-            Top = wa.Y + (wa.Height - Height) / 2;
-            WindowStartupLocation = WindowStartupLocation.Manual;
+            double cx = state?.CenterX ?? (SystemParameters.WorkArea.Left + SystemParameters.WorkArea.Width / 2);
+            double cy = state?.CenterY ?? (SystemParameters.WorkArea.Top + SystemParameters.WorkArea.Height / 2);
+            PlaceWindowInDipWorkArea(w, h, GetDipWorkAreaContaining(cx, cy));
 
             if (state != null &&
                 string.Equals(state.WindowState, "Maximized", StringComparison.OrdinalIgnoreCase))
@@ -4547,6 +4715,8 @@ return results.slice(-maxLines);
 
             if (state != null)
             {
+                if (!string.IsNullOrWhiteSpace(state.Language))
+                    _currentLanguage = state.Language.Trim().ToLowerInvariant();
                 _welcomeExpandedPref = state.WelcomeExpanded;
                 _botSettingsExpandedPref = state.BotSettingsExpanded;
                 _recorderExpandedPref = state.RecorderExpanded;
@@ -4559,12 +4729,8 @@ return results.slice(-maxLines);
         {
             try
             {
-                var wa = GetMonitorWorkAreaFromPoint(
-                    SystemParameters.PrimaryScreenWidth / 2,
-                    SystemParameters.PrimaryScreenHeight / 2);
-                Left = wa.X + (wa.Width - Width) / 2;
-                Top = wa.Y + (wa.Height - Height) / 2;
-                WindowStartupLocation = WindowStartupLocation.Manual;
+                var wa = SystemParameters.WorkArea;
+                PlaceWindowInDipWorkArea(Width, Height, wa);
             }
             catch { }
         }
@@ -4598,6 +4764,18 @@ return results.slice(-maxLines);
         else return;
         _sectionExpanderPrefsReady = true;
         SaveUiLayout();
+        if (sender is Expander ex && ex.IsExpanded)
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                try
+                {
+                    ex.UpdateLayout();
+                    ScrollSectionIntoView(ex);
+                }
+                catch { }
+            }, DispatcherPriority.Loaded);
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -4623,6 +4801,9 @@ return results.slice(-maxLines);
     }
 
     private const uint MonitorDefaultToNearest = 2;
+    private const int MdTEffectiveDpi = 0;
+
+    private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, IntPtr lprcMonitor, IntPtr dwData);
 
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromPoint(WinPoint pt, uint dwFlags);
@@ -4630,24 +4811,67 @@ return results.slice(-maxLines);
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfo lpmi);
 
-    /// <summary>Working area of the monitor that contains the given desktop point (DIP → pixel approx 1:1 for placement).</summary>
-    private static Rect GetMonitorWorkAreaFromPoint(double x, double y)
+    [DllImport("user32.dll")]
+    private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
+
+    [DllImport("Shcore.dll")]
+    private static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    /// <summary>Work area in WPF DIPs (scaled viewport), not raw pixels.</summary>
+    private static Rect GetDipWorkAreaContaining(double dipX, double dipY)
     {
-        var pt = new WinPoint { X = (int)Math.Round(x), Y = (int)Math.Round(y) };
-        IntPtr mon = MonitorFromPoint(pt, MonitorDefaultToNearest);
-        if (mon != IntPtr.Zero)
+        var areas = new List<Rect>();
+        try
         {
-            var mi = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
-            if (GetMonitorInfo(mon, ref mi))
+            EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (h, hdc, lprc, data) =>
             {
-                return new Rect(
-                    mi.Work.Left,
-                    mi.Work.Top,
-                    Math.Max(200, mi.Work.Right - mi.Work.Left),
-                    Math.Max(200, mi.Work.Bottom - mi.Work.Top));
-            }
+                var mi = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+                if (!GetMonitorInfo(h, ref mi)) return true;
+                double scale = 1.0;
+                try
+                {
+                    if (GetDpiForMonitor(h, MdTEffectiveDpi, out uint dx, out _) == 0 && dx > 0)
+                        scale = dx / 96.0;
+                }
+                catch { }
+                if (scale < 0.5) scale = 1.0;
+                double w = (mi.Work.Right - mi.Work.Left) / scale;
+                double ht = (mi.Work.Bottom - mi.Work.Top) / scale;
+                areas.Add(new Rect(mi.Work.Left / scale, mi.Work.Top / scale, Math.Max(200, w), Math.Max(200, ht)));
+                return true;
+            }, IntPtr.Zero);
         }
-        return new Rect(0, 0, SystemParameters.PrimaryScreenWidth, SystemParameters.PrimaryScreenHeight);
+        catch { }
+
+        foreach (var r in areas)
+        {
+            if (r.Contains(dipX, dipY)) return r;
+        }
+
+        Rect best = areas.Count > 0 ? areas[0] : SystemParameters.WorkArea;
+        double bestD = double.MaxValue;
+        var pt = new System.Windows.Point(dipX, dipY);
+        foreach (var r in areas)
+        {
+            var c = new System.Windows.Point(r.X + r.Width / 2, r.Y + r.Height / 2);
+            double d = (c - pt).LengthSquared;
+            if (d < bestD) { bestD = d; best = r; }
+        }
+        return best;
+    }
+
+    private void PlaceWindowInDipWorkArea(double desiredW, double desiredH, Rect wa)
+    {
+        const double margin = 8;
+        double availW = Math.Max(200, wa.Width - margin * 2);
+        double availH = Math.Max(200, wa.Height - margin * 2);
+        MinWidth = Math.Min(_designMinWidth, availW);
+        MinHeight = Math.Min(_designMinHeight, availH);
+        Width = Math.Clamp(desiredW, MinWidth, availW);
+        Height = Math.Clamp(desiredH, MinHeight, availH);
+        Left = wa.X + (wa.Width - Width) / 2;
+        Top = wa.Y + (wa.Height - Height) / 2;
+        WindowStartupLocation = WindowStartupLocation.Manual;
     }
 
     protected override void OnClosed(EventArgs e)
@@ -4658,6 +4882,7 @@ return results.slice(-maxLines);
             SaveMessages();
         if (_commandsReady)
             SaveCommands();
+        try { AppDatabase.Close(); } catch { }
         StopChatQueue();
         _botGlowAnimator?.Stop();
         StopUpdateTimers();
