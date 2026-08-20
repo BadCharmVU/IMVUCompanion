@@ -144,13 +144,9 @@ internal static class AppDatabase
             CreateSchema();
             if (!IsFlag("initialized"))
             {
-                if (HasLegacyJson())
-                    MigrateFromJson();
                 SetFlag("initialized", true);
                 SetMeta("schema_version", "2");
             }
-            // Existing DBs were initialized before AI lived in SQLite.
-            MigrateAiJsonIfNeeded();
             DeleteLegacyJsonFiles();
         }
     }

@@ -2,9 +2,9 @@
 
 Windows desktop companion for **IMVU Next** chat rooms. IMVU runs inside the app (WebView2). The companion can greet joiners, answer `!commands`, record AFK notes, send notices to people in the room, and check for updates automatically.
 
-**Current release:** [v0.9.95](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
+**Current release:** [v0.9.96](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
 
-Download **`IMVUCompanion-Setup-v0.9.95.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
+Download **`IMVUCompanion-Setup-v0.9.96.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
 
 ---
 

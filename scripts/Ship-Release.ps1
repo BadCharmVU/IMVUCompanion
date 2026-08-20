@@ -52,8 +52,12 @@ if (-not $SkipPush) {
     & $git push origin HEAD
     if ($LASTEXITCODE -ne 0) { throw "git push failed. Run: gh auth setup-git" }
 
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
     & $git rev-parse $tag 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    $tagExists = ($LASTEXITCODE -eq 0)
+    $ErrorActionPreference = $prevEap
+    if (-not $tagExists) {
         Write-Host "==> git tag $tag"
         & $git tag $tag
         if ($LASTEXITCODE -ne 0) { throw "git tag failed." }

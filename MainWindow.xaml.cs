@@ -2376,76 +2376,63 @@ public partial class MainWindow : Window
         return set.Messages[_currentLanguage];
     }
 
-    private void Welcome1Add_Click(object sender, RoutedEventArgs e)
-    {
-        var list = EnsureLangList(_welcome1);
-        string text = Welcome1EditBox?.Text?.Trim() ?? "";
-        if (string.IsNullOrEmpty(text)) text = DefaultWelcomeMessageText;
-        if (!list.Contains(text))
-        {
-            list.Add(text);
-            _welcome1View.Add(text);
-            SaveMessages();
-        }
-    }
+    private void Welcome1Add_Click(object sender, RoutedEventArgs e) =>
+        WelcomeAdd(_welcome1, _welcome1View, Welcome1List, Welcome1EditBox);
 
-    private void Welcome1Update_Click(object sender, RoutedEventArgs e)
+    private void Welcome1Update_Click(object sender, RoutedEventArgs e) =>
+        WelcomeUpdate(_welcome1, _welcome1View, Welcome1List, Welcome1EditBox);
+
+    private void Welcome1Delete_Click(object sender, RoutedEventArgs e) =>
+        WelcomeDelete(_welcome1, _welcome1View, Welcome1List, Welcome1EditBox);
+
+    private void Welcome2Add_Click(object sender, RoutedEventArgs e) =>
+        WelcomeAdd(_welcome2, _welcome2View, Welcome2List, Welcome2EditBox);
+
+    private void Welcome2Update_Click(object sender, RoutedEventArgs e) =>
+        WelcomeUpdate(_welcome2, _welcome2View, Welcome2List, Welcome2EditBox);
+
+    private void Welcome2Delete_Click(object sender, RoutedEventArgs e) =>
+        WelcomeDelete(_welcome2, _welcome2View, Welcome2List, Welcome2EditBox);
+
+    private void WelcomeAdd(
+        WelcomeMsgSet set, ObservableCollection<string> view, ListBox? listBox, TextBox? edit)
     {
-        if (Welcome1List?.SelectedItem is not string oldSel) return;
-        string newText = Welcome1EditBox?.Text?.Trim() ?? "";
-        if (string.IsNullOrEmpty(newText)) return;
-        var list = EnsureLangList(_welcome1);
-        int idx = list.IndexOf(oldSel);
-        if (idx < 0) return;
-        list[idx] = newText;
-        _welcome1View[idx] = newText;
+        string text = edit?.Text?.Trim() ?? "";
+        if (string.IsNullOrEmpty(text)) return;
+        var list = EnsureLangList(set);
+        list.Add(text);
+        view.Add(text);
         SaveMessages();
+        if (edit != null) edit.Text = "";
+        if (listBox != null) listBox.SelectedIndex = -1;
     }
 
-    private void Welcome1Delete_Click(object sender, RoutedEventArgs e)
+    private void WelcomeUpdate(
+        WelcomeMsgSet set, ObservableCollection<string> view, ListBox? listBox, TextBox? edit)
     {
-        if (Welcome1List?.SelectedItem is not string sel) return;
-        var list = EnsureLangList(_welcome1);
-        list.Remove(sel);
-        _welcome1View.Remove(sel);
-        if (Welcome1EditBox != null) Welcome1EditBox.Text = "";
+        int i = listBox?.SelectedIndex ?? -1;
+        string text = edit?.Text?.Trim() ?? "";
+        if (i < 0 || string.IsNullOrEmpty(text)) return;
+        var list = EnsureLangList(set);
+        if (i >= list.Count) return;
+        list[i] = text;
+        if (i < view.Count) view[i] = text;
         SaveMessages();
+        if (listBox != null) listBox.SelectedIndex = i;
     }
 
-    private void Welcome2Add_Click(object sender, RoutedEventArgs e)
+    private void WelcomeDelete(
+        WelcomeMsgSet set, ObservableCollection<string> view, ListBox? listBox, TextBox? edit)
     {
-        var list = EnsureLangList(_welcome2);
-        string text = Welcome2EditBox?.Text?.Trim() ?? "";
-        if (string.IsNullOrEmpty(text)) text = DefaultSecondMessageText;
-        if (!list.Contains(text))
-        {
-            list.Add(text);
-            _welcome2View.Add(text);
-            SaveMessages();
-        }
-    }
-
-    private void Welcome2Update_Click(object sender, RoutedEventArgs e)
-    {
-        if (Welcome2List?.SelectedItem is not string oldSel) return;
-        string newText = Welcome2EditBox?.Text?.Trim() ?? "";
-        if (string.IsNullOrEmpty(newText)) return;
-        var list = EnsureLangList(_welcome2);
-        int idx = list.IndexOf(oldSel);
-        if (idx < 0) return;
-        list[idx] = newText;
-        _welcome2View[idx] = newText;
+        int i = listBox?.SelectedIndex ?? -1;
+        if (i < 0) return;
+        var list = EnsureLangList(set);
+        if (i >= list.Count) return;
+        list.RemoveAt(i);
+        if (i < view.Count) view.RemoveAt(i);
+        if (edit != null) edit.Text = "";
         SaveMessages();
-    }
-
-    private void Welcome2Delete_Click(object sender, RoutedEventArgs e)
-    {
-        if (Welcome2List?.SelectedItem is not string sel) return;
-        var list = EnsureLangList(_welcome2);
-        list.Remove(sel);
-        _welcome2View.Remove(sel);
-        if (Welcome2EditBox != null) Welcome2EditBox.Text = "";
-        SaveMessages();
+        if (listBox != null) listBox.SelectedIndex = -1;
     }
 
     // ===== !Commands management (category -> lang -> list<CommandEntry>) =====

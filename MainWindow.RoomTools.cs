@@ -424,22 +424,28 @@ public partial class MainWindow
     private void TryRecordChatMessage(string speaker, string msg, bool isWhisper, string? userId = null)
     {
         if (!_recorderEnabled || string.IsNullOrWhiteSpace(msg)) return;
-        if (IsBotOwnMessage(speaker, msg))
+
+        string name = NormalizeSpeaker(speaker);
+        string uid = (userId ?? "").Trim();
+        if (string.IsNullOrEmpty(uid))
+            uid = LookupRoomUserIdByName(name);
+
+        if (IsSelfName(speaker) || IsSelfName(name) || IsSelfUserId(uid) || IsBotOwnMessage(speaker, msg))
         {
             RememberSelfFromChat(speaker);
+            if (!string.IsNullOrEmpty(uid))
+                RememberSelfIdentity(name, uid);
             return;
         }
 
         bool triggerHit = MatchesRecorderTrigger(msg);
         if (!isWhisper && !triggerHit) return;
 
-        string name = NormalizeSpeaker(speaker);
         if (string.IsNullOrWhiteSpace(name) || !IsValidSpeaker(name)) return;
 
         string body = triggerHit ? RecorderPayload(msg) : msg.Trim();
         if (IsRecorderChromeLabel(body)) return;
         string stamp = DateTime.Now.ToString("HH:mm");
-        string uid = (userId ?? "").Trim();
 
         RecorderUserVm? user = null;
         if (!string.IsNullOrEmpty(uid) && _recorderByUid.TryGetValue(uid, out user) && user != null)
@@ -487,6 +493,12 @@ public partial class MainWindow
         if (i < 0 || i >= _receiptMessages.Count) return;
         string text = _receiptMessages[i];
         user.ReceiptIndex = i + 1;
+        if (string.IsNullOrWhiteSpace(user.UserId))
+        {
+            string found = LookupRoomUserIdByName(user.Name);
+            if (!string.IsNullOrEmpty(found))
+                user.UserId = found;
+        }
         SaveRecorderSettings();
         if (!isWhisper)
             text = PrefixPublicDm(user.Name, text);
@@ -1192,6 +1204,25 @@ public partial class MainWindow
         return string.Equals(userId.Trim(), _selfDetectedUid.Trim(), StringComparison.Ordinal);
     }
 
+    private string LookupRoomUserIdByName(string? name)
+    {
+        string fold = FoldImvuName(name);
+        if (string.IsNullOrEmpty(fold)) return "";
+        var room = _roomUsers.FirstOrDefault(u =>
+            !string.IsNullOrWhiteSpace(u.UserId) && FoldImvuName(u.Name) == fold);
+        if (room != null)
+            return room.UserId.Trim();
+        foreach (var kv in _uidDisplayNames)
+        {
+            if (FoldImvuName(kv.Value) == fold && !string.IsNullOrWhiteSpace(kv.Key))
+                return kv.Key.Trim();
+        }
+        if (_recorderByName.TryGetValue(name ?? "", out var rec) &&
+            rec != null && !string.IsNullOrWhiteSpace(rec.UserId))
+            return rec.UserId.Trim();
+        return "";
+    }
+
     private void RememberSelfFromChat(string speaker)
     {
         string name = NormalizeSpeaker(speaker);
@@ -1200,6 +1231,7 @@ public partial class MainWindow
             return;
         _selfDetectedName = name.Trim();
         PruneSelfFromRoster();
+        PruneSelfFromRecorder();
     }
 
     private void PruneSelfFromRoster()
@@ -1238,7 +1270,10 @@ public partial class MainWindow
                 changed = true;
             }
             if (changed)
+            {
                 PruneSelfFromRoster();
+                PruneSelfFromRecorder();
+            }
         }
         catch { }
     }
@@ -1312,6 +1347,24 @@ public partial class MainWindow
         if (string.Equals(_selfDetectedUid, userId.Trim(), StringComparison.Ordinal)) return;
         _selfDetectedUid = userId.Trim();
         PruneSelfFromRoster();
+        PruneSelfFromRecorder();
+    }
+
+    private void PruneSelfFromRecorder()
+    {
+        bool removed = false;
+        for (int i = _recorderUsers.Count - 1; i >= 0; i--)
+        {
+            var u = _recorderUsers[i];
+            if (!IsSelfName(u.Name) && !IsSelfUserId(u.UserId)) continue;
+            _recorderUsers.RemoveAt(i);
+            _recorderByName.Remove(u.Name);
+            if (!string.IsNullOrEmpty(u.UserId))
+                _recorderByUid.Remove(u.UserId);
+            removed = true;
+        }
+        if (removed)
+            RefreshRecorderUsersUi();
     }
 
     private bool RemoveRoomUser(string name, string? userId = null)
