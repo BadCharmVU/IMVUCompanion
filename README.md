@@ -16,8 +16,8 @@ Download **`IMVUCompanion-Setup-v0.9.96.exe`** from [Releases](https://github.co
 - **Message Recorder Machine** — AFK notes via a custom trigger, plus incoming whispers
 - **Room Console** — live room roster: message, whisper, or remove people in the room
 - **!Commands** with categories and languages (English / Russian)
-- **!bbot** AI hook (providers configurable; maintenance reply when not set up)
-- Room-aware bot: works while you are in a room; pauses cleanly when you leave
+- AI hook (providers configurable; maintenance reply when not set up)
+- Room-aware Companion: works while you are in a room; pauses cleanly when you leave
 - Activity log with clear categories
 - **Auto-update** button (installed builds) — checks for newer versions and installs the Setup package
 - Window layout remembered between sessions
