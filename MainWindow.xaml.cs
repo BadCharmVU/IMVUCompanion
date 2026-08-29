@@ -15,6 +15,7 @@ using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Windows.Graphics.Imaging;
@@ -34,8 +35,7 @@ public enum LogCategory
     Warning,
     Error,
     Left,
-    PublicDm,
-    WhisperDm,
+    DirectDm,
     Kick,
     Remove
 }
@@ -199,9 +199,16 @@ public partial class MainWindow : Window
     private int _sessionGreetedCount;
     private bool _botSessionTimerRunning;
     private TimeSpan _botSessionPausedElapsed;
+    private int _lifetimeGreeted;
+    private TimeSpan _lifetimeTime = TimeSpan.Zero;
+    private int _lifetimeSessions;
+    private bool _lifetimeFlushed = true;
+    private bool _showLifetimeStats;
 
-    private static readonly SolidColorBrush StatusUsersBrush = CreateFrozenBrush(0xCA, 0x8A, 0x04);
-    private static readonly SolidColorBrush StatusTimerBrush = CreateFrozenBrush(0x4A, 0xDE, 0x80);
+    private static readonly SolidColorBrush StatusSessionGreetedBrush = CreateFrozenBrush(0xF8, 0x9B, 0x1C);
+    private static readonly SolidColorBrush StatusSessionTimerBrush = CreateFrozenBrush(0x63, 0xB3, 0x45);
+    private static readonly SolidColorBrush StatusLifetimeGreetedBrush = CreateFrozenBrush(0xEE, 0x2F, 0x24);
+    private static readonly SolidColorBrush StatusLifetimeTimerBrush = CreateFrozenBrush(0x15, 0x94, 0xD0);
     private static readonly SolidColorBrush StatusClockBrush = CreateFrozenBrush(0xC0, 0xC0, 0xE0);
     private static readonly SolidColorBrush StatusSeparatorBrush = CreateFrozenBrush(0xC0, 0xC0, 0xE0);
 
@@ -283,6 +290,7 @@ public partial class MainWindow : Window
             // Title-bar X closes the app (same clean shutdown as Exit). Layout is saved on close.
             this.Closing += MainWindow_Closing;
             AppDatabase.Initialize();
+            LoadLifetimeStats();
             RestoreUiLayout();
 
             this.Show(); this.Activate();
@@ -360,8 +368,7 @@ public partial class MainWindow : Window
         LogCategory.Trigger => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xA6, 0x7B, 0x5B)),
         LogCategory.Whisper => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xD5, 0xA5, 0x48)),
         LogCategory.Left => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFB, 0x71, 0x85)),
-        LogCategory.PublicDm => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x7D, 0xD3, 0xFC)),
-        LogCategory.WhisperDm => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xD5, 0xA5, 0x48)),
+        LogCategory.DirectDm => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xC0, 0x84, 0xFC)),
         LogCategory.Kick => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFB, 0x71, 0x85)),
         LogCategory.Remove => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFB, 0x71, 0x85)),
         LogCategory.Warning => new SolidColorBrush(System.Windows.Media.Color.FromRgb(0xFB, 0x92, 0x3C)),
@@ -456,17 +463,96 @@ public partial class MainWindow : Window
     private string BuildSessionStatsMessage() =>
         $"• IMVU Companion • Online for: {GetSessionTimerText()} • Greeted: {_sessionGreetedCount} Users •";
 
+    private int DisplayLifetimeGreeted() =>
+        _lifetimeFlushed ? _lifetimeGreeted : _lifetimeGreeted + _sessionGreetedCount;
+
+    private TimeSpan DisplayLifetimeTime() =>
+        _lifetimeFlushed ? _lifetimeTime : _lifetimeTime + GetBotSessionElapsed();
+
+    private string BuildLifetimeStatsMessage() =>
+        "• IMVU Companion LifeTime • Online " + _lifetimeSessions + " times for: " +
+        FormatSessionElapsed(DisplayLifetimeTime()) + " • Greeted: " + DisplayLifetimeGreeted() + " •";
+
+    private void LoadLifetimeStats()
+    {
+        try
+        {
+            int.TryParse(AppDatabase.ReadMeta("lifetime_greeted"), out _lifetimeGreeted);
+            int.TryParse(AppDatabase.ReadMeta("lifetime_sessions"), out _lifetimeSessions);
+            if (long.TryParse(AppDatabase.ReadMeta("lifetime_time"), out long ticks) && ticks > 0)
+                _lifetimeTime = TimeSpan.FromTicks(ticks);
+            else
+                _lifetimeTime = TimeSpan.Zero;
+        }
+        catch
+        {
+            _lifetimeGreeted = 0;
+            _lifetimeSessions = 0;
+            _lifetimeTime = TimeSpan.Zero;
+        }
+        _lifetimeFlushed = true;
+    }
+
+    private void SaveLifetimeStats()
+    {
+        try
+        {
+            AppDatabase.WriteMeta("lifetime_greeted", _lifetimeGreeted.ToString());
+            AppDatabase.WriteMeta("lifetime_sessions", _lifetimeSessions.ToString());
+            AppDatabase.WriteMeta("lifetime_time", _lifetimeTime.Ticks.ToString());
+        }
+        catch { }
+    }
+
+    private void FlushLifetimeFromSession()
+    {
+        if (_lifetimeFlushed) return;
+        _lifetimeGreeted += _sessionGreetedCount;
+        _lifetimeTime += GetBotSessionElapsed();
+        _lifetimeFlushed = true;
+        SaveLifetimeStats();
+    }
+
+    private void StatsModeLabel_Click(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        _showLifetimeStats = !_showLifetimeStats;
+        AppendActivityLog(
+            _showLifetimeStats
+                ? "[Event] Displaying Lifetime Statistics"
+                : "[Event] Displaying Current Session Statistics",
+            LogCategory.Info);
+        UpdateStatusBar();
+    }
+
     private void UpdateStatusBar()
     {
         try
         {
             void writeUi()
             {
+                if (StatsModeLabel != null)
+                {
+                    StatsModeLabel.Text = _showLifetimeStats ? "LIFETIME:" : "SESSION:";
+                    StatsModeLabel.Foreground = StatusClockBrush;
+                }
                 if (AliveText == null) return;
                 AliveText.Inlines.Clear();
-                AliveText.Inlines.Add(new Run(_sessionGreetedCount.ToString()) { Foreground = StatusUsersBrush });
+                string greeted = _showLifetimeStats
+                    ? DisplayLifetimeGreeted().ToString()
+                    : _sessionGreetedCount.ToString();
+                string timer = _showLifetimeStats
+                    ? FormatSessionElapsed(DisplayLifetimeTime())
+                    : GetSessionTimerText();
+                AliveText.Inlines.Add(new Run(greeted)
+                {
+                    Foreground = _showLifetimeStats ? StatusLifetimeGreetedBrush : StatusSessionGreetedBrush
+                });
                 AliveText.Inlines.Add(new Run(" - ") { Foreground = StatusSeparatorBrush });
-                AliveText.Inlines.Add(new Run(GetSessionTimerText()) { Foreground = StatusTimerBrush });
+                AliveText.Inlines.Add(new Run(timer)
+                {
+                    Foreground = _showLifetimeStats ? StatusLifetimeTimerBrush : StatusSessionTimerBrush
+                });
                 AliveText.Inlines.Add(new Run("   |   ") { Foreground = StatusSeparatorBrush });
                 AliveText.Inlines.Add(new Run(DateTime.Now.ToString("MM.dd.yyyy - HH:mm:ss")) { Foreground = StatusClockBrush });
             }
@@ -1014,8 +1100,10 @@ public partial class MainWindow : Window
             _botPausedNoRoom = false;
             _botUserPaused = false;
             _seenLines.Clear();
-            // Full start always resets session stats; pause-for-room does not
+            // Commit the previous run into lifetime, then start a new session.
+            FlushLifetimeFromSession();
             ResetBotSessionStats();
+            _lifetimeFlushed = false;
             ClearJoinSessionState();
             ClearCommandSessionState();
             _botCts = new CancellationTokenSource();
@@ -1026,6 +1114,8 @@ public partial class MainWindow : Window
             UpdateBotChrome();
             UpdatePageStatus();
             await InitialChatScan();
+            _lifetimeSessions++;
+            SaveLifetimeStats();
             AppendActivityLog("[Event] Started", LogCategory.Info);
         }
         catch (Exception ex)
@@ -1053,6 +1143,7 @@ public partial class MainWindow : Window
         StopChatQueue();
         _ = StopBotCleanupAsync();
         PauseBotSessionTimer();
+        FlushLifetimeFromSession();
         UpdateBotChrome();
         AppendActivityLog("[Event] Stopped", LogCategory.Info);
         UpdatePageStatus();
@@ -1585,11 +1676,16 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Replace known placeholders in templates (extensible for future calls).</summary>
-    private static string ApplyMessageTemplate(string template, string speakerName)
+    private string ApplyMessageTemplate(string template, string speakerName)
     {
         if (string.IsNullOrEmpty(template)) return template ?? "";
         string name = speakerName ?? "";
         return template
+            .Replace("{lifetime_stats}", BuildLifetimeStatsMessage(), StringComparison.OrdinalIgnoreCase)
+            .Replace("{lifetime_greeted}", DisplayLifetimeGreeted().ToString(), StringComparison.OrdinalIgnoreCase)
+            .Replace("{lifetime_time}", FormatSessionElapsed(DisplayLifetimeTime()), StringComparison.OrdinalIgnoreCase)
+            .Replace("{lifetime_sessions}", _lifetimeSessions.ToString(), StringComparison.OrdinalIgnoreCase)
+            .Replace("{session_stats}", BuildSessionStatsMessage(), StringComparison.OrdinalIgnoreCase)
             .Replace("{name}", name, StringComparison.OrdinalIgnoreCase)
             .Replace("{Name}", name, StringComparison.Ordinal);
     }
@@ -1625,23 +1721,44 @@ public partial class MainWindow : Window
         SetCommandCategoryComboQuiet(row.CategoryKey);
         if (CommandsList != null) CommandsList.SelectedItem = row.Entry;
         HideCategorySubRows();
-        // Edit modal: Save + Exit only (Delete is only on the list trash icon)
+        // Edit modal: Add Trigger + Update + Exit (Delete is only on the list trash icon)
         if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Collapsed;
         if (CommandUpdateCategoryBtn != null) CommandUpdateCategoryBtn.Visibility = Visibility.Visible;
-        if (CommandModalSaveBtn != null) CommandModalSaveBtn.Content = "Save";
+        if (CommandModalAddNewBtn != null) CommandModalAddNewBtn.Visibility = Visibility.Visible;
+        if (CommandModalSaveBtn != null) CommandModalSaveBtn.Content = "Update";
         UpdateCommandModalSaveEnabled();
         if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Visible;
         if (CategoryEditorModal != null) CategoryEditorModal.Visibility = Visibility.Collapsed;
     }
 
+    /// <summary>Triggers in this category for the current UI language only. Same name in another language is a different category.</summary>
     private int CountCommandsInCategory(string categoryKey)
     {
         if (!_commandCategories.TryGetValue(categoryKey, out var langs) || langs == null)
             return 0;
-        int n = 0;
-        foreach (var list in langs.Values)
-            if (list != null) n += list.Count;
-        return n;
+        return GetCommandLangListOrEmpty(langs, _commandLanguage).Count;
+    }
+
+    /// <summary>Drop this language's copy of the category. Other languages keep their own.</summary>
+    private void RemoveCategoryForCurrentLanguage(string cat)
+    {
+        if (_commandCategories.TryGetValue(cat, out var langs) && langs != null)
+        {
+            langs.Remove(_commandLanguage);
+            if (langs.Count == 0)
+                _commandCategories.Remove(cat);
+        }
+        _categorySettings.Remove(cat);
+        if (string.Equals(_currentCommandCategory, cat, StringComparison.OrdinalIgnoreCase) ||
+            !CategoryExistsForCurrentLanguage(_currentCommandCategory))
+            _currentCommandCategory = CategoriesForLanguage(_commandLanguage).FirstOrDefault() ?? "General";
+        if (string.Equals(_activeCommandCategory, cat, StringComparison.OrdinalIgnoreCase))
+            _activeCommandCategory = _currentCommandCategory;
+        _activeCategoryByLang[_commandLanguage] = _currentCommandCategory;
+        if (string.Equals(_commandFilterCategory, cat, StringComparison.OrdinalIgnoreCase))
+            _commandFilterCategory = null;
+        PopulateCategoryCombo();
+        PopulateCategoryFilterCombo();
     }
 
     private void CommandRowDelete_Click(object sender, RoutedEventArgs e)
@@ -1724,28 +1841,13 @@ public partial class MainWindow : Window
                 c.Response == row.Entry.Response);
             underlying.Remove(row.Entry);
 
-            if (underlying.Count == 0)
-                langDict.Remove(_commandLanguage);
-            bool categoryEmpty = langDict.Count == 0 || langDict.Values.All(l => l == null || l.Count == 0);
-            if (categoryEmpty && removeCategory)
+            if (underlying.Count == 0 && removeCategory)
             {
-                _commandCategories.Remove(row.CategoryKey);
-                _categorySettings.Remove(row.CategoryKey);
-                if (string.Equals(_currentCommandCategory, row.CategoryKey, StringComparison.OrdinalIgnoreCase))
-                    _currentCommandCategory = _commandCategories.Keys.FirstOrDefault() ?? "General";
-                if (string.Equals(_activeCommandCategory, row.CategoryKey, StringComparison.OrdinalIgnoreCase))
-                    _activeCommandCategory = _currentCommandCategory;
-                if (string.Equals(_commandFilterCategory, row.CategoryKey, StringComparison.OrdinalIgnoreCase))
-                    _commandFilterCategory = null;
-                PopulateCategoryCombo();
-                PopulateCategoryFilterCombo();
+                RemoveCategoryForCurrentLanguage(row.CategoryKey);
             }
-            else if (categoryEmpty)
+            else if (underlying.Count == 0)
             {
-                // Keep empty category (no languages / no commands) so it stays in dropdowns
-                if (!_commandCategories.ContainsKey(row.CategoryKey))
-                    _commandCategories[row.CategoryKey] =
-                        new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+                langDict[_commandLanguage] = underlying;
                 GetOrCreateCategorySettings(row.CategoryKey);
             }
 
@@ -1772,7 +1874,7 @@ public partial class MainWindow : Window
     private void EmptyCategoryDeleteCategory_Click(object sender, RoutedEventArgs e)
     {
         string cat = _commandFilterCategory ?? "";
-        if (string.IsNullOrEmpty(cat) || !_commandCategories.ContainsKey(cat)) return;
+        if (string.IsNullOrEmpty(cat) || !CategoryExistsForCurrentLanguage(cat)) return;
         _pendingDeleteCategoryKey = cat;
         if (DeleteCategoryMessage != null)
             DeleteCategoryMessage.Text =
@@ -1796,15 +1898,7 @@ public partial class MainWindow : Window
             DeleteCategoryOverlay.Visibility = Visibility.Collapsed;
         if (string.IsNullOrEmpty(cat)) return;
 
-        _commandCategories.Remove(cat);
-        _categorySettings.Remove(cat);
-        if (string.Equals(_currentCommandCategory, cat, StringComparison.OrdinalIgnoreCase))
-            _currentCommandCategory = _commandCategories.Keys.FirstOrDefault() ?? "General";
-        if (string.Equals(_activeCommandCategory, cat, StringComparison.OrdinalIgnoreCase))
-            _activeCommandCategory = _currentCommandCategory;
-        _commandFilterCategory = null;
-        PopulateCategoryCombo();
-        PopulateCategoryFilterCombo();
+        RemoveCategoryForCurrentLanguage(cat);
         RefreshCommandsList();
         SaveCommands();
         AppendLog($"Category removed: {cat}", LogCategory.Info);
@@ -1815,7 +1909,7 @@ public partial class MainWindow : Window
         if (CommandsEmptyCategoryPanel == null) return;
         bool show =
             !string.IsNullOrEmpty(_commandFilterCategory) &&
-            _commandCategories.ContainsKey(_commandFilterCategory) &&
+            CategoryExistsForCurrentLanguage(_commandFilterCategory) &&
             CountCommandsInCategory(_commandFilterCategory) == 0 &&
             string.IsNullOrWhiteSpace(_commandSearchText);
         CommandsEmptyCategoryPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
@@ -1849,7 +1943,7 @@ public partial class MainWindow : Window
     private void ShowUpdateCategoryRow_Click(object sender, RoutedEventArgs e) => ShowEditCategoryModal_Click(sender, e);
     private void ShowAddCategoryRow_Click(object sender, RoutedEventArgs e) => ShowAddCategoryModal_Click(sender, e);
 
-    private void OpenCategoryEditorModal(bool isAdd)
+    private void OpenCategoryEditorModal(bool isAdd, string? categoryName = null)
     {
         _categoryEditorIsAdd = isAdd;
         _pendingNewCategoryColor = NextCategoryColor();
@@ -1890,7 +1984,9 @@ public partial class MainWindow : Window
             else
             {
                 string cat = _currentCommandCategory;
-                if (CommandCategoryCombo?.SelectedItem is ComboBoxItem cbi &&
+                if (!string.IsNullOrWhiteSpace(categoryName))
+                    cat = categoryName.Trim();
+                else if (CommandCategoryCombo?.SelectedItem is ComboBoxItem cbi &&
                     !string.IsNullOrWhiteSpace(cbi.Content?.ToString()))
                     cat = cbi.Content!.ToString()!.Trim();
                 _categoryEditorOriginalName = cat;
@@ -2093,6 +2189,7 @@ public partial class MainWindow : Window
             SetModalFieldError(tb, false);
         UpdateCommandModalPlaceholders();
         UpdateCommandModalSaveEnabled();
+        MessageEditBox_TextChanged(sender, e);
     }
 
     private void CategoryNameEditBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -2232,8 +2329,10 @@ public partial class MainWindow : Window
             _currentCommandCategory = cat;
             _activeCommandCategory = cat;
             _activeCategoryByLang[lang] = cat;
+            _commandFilterCategory = null;
+            _commandsPageIndex = 0;
             PopulateCategoryCombo();
-            PopulateCategoryFilterCombo();
+            PopulateCategoryFilterCombo(selectAll: true);
         }
         if (_messagesReady) SaveMessages();
         if (_commandsReady) SaveCommands();
@@ -2357,6 +2456,40 @@ public partial class MainWindow : Window
         SaveMessages();
     }
 
+    private void MessageEditBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (sender is not TextBox box) return;
+        var btn = box == Welcome1EditBox ? Welcome1ClearBtn
+            : box == Welcome2EditBox ? Welcome2ClearBtn
+            : box == DmEditBox ? DmEditClearBtn
+            : box == RoomUserMessageBox ? RoomUserMessageClearBtn
+            : box == RecorderReplyBox ? RecorderReplyClearBtn
+            : box == RecorderReceiptEditBox ? RecorderReceiptClearBtn
+            : box == CommandEditBox ? CommandEditClearBtn
+            : box == CommandResponseEditBox ? CommandResponseEditClearBtn
+            : null;
+        if (btn != null)
+            btn.Visibility = string.IsNullOrEmpty(box.Text) ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void MessageEditClear_Click(object sender, RoutedEventArgs e)
+    {
+        TextBox? box = null;
+        ListBox? list = null;
+        if (sender == Welcome1ClearBtn) { box = Welcome1EditBox; list = Welcome1List; }
+        else if (sender == Welcome2ClearBtn) { box = Welcome2EditBox; list = Welcome2List; }
+        else if (sender == DmEditClearBtn) { box = DmEditBox; list = DmEditList; }
+        else if (sender == RoomUserMessageClearBtn) box = RoomUserMessageBox;
+        else if (sender == RecorderReplyClearBtn) box = RecorderReplyBox;
+        else if (sender == RecorderReceiptClearBtn) { box = RecorderReceiptEditBox; list = RecorderReceiptList; }
+        else if (sender == CommandEditClearBtn) box = CommandEditBox;
+        else if (sender == CommandResponseEditClearBtn) box = CommandResponseEditBox;
+        if (box == null) return;
+        box.Clear();
+        if (list != null) list.SelectedIndex = -1;
+        Keyboard.ClearFocus();
+    }
+
     private void Welcome1List_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (Welcome1List?.SelectedItem is string sel && Welcome1EditBox != null)
@@ -2466,13 +2599,17 @@ public partial class MainWindow : Window
             return new List<CommandEntry>
             {
                 new CommandEntry { Command = "!info", Response = "Пример информационного ответа — отредактируйте меня" },
-                new CommandEntry { Command = "!помощь", Response = "Пример второго информационного ответа — отредактируйте меня" }
+                new CommandEntry { Command = "!помощь", Response = "Пример второго информационного ответа — отредактируйте меня" },
+                new CommandEntry { Command = "!stats", Response = "{session_stats}" },
+                new CommandEntry { Command = "!lifetime", Response = "{lifetime_stats}" }
             };
         }
         return new List<CommandEntry>
         {
             new CommandEntry { Command = "!info", Response = "Sample info reply - Edit Me" },
-            new CommandEntry { Command = "!help", Response = "Sample 2nd info reply - Edit Me" }
+            new CommandEntry { Command = "!help", Response = "Sample 2nd info reply - Edit Me" },
+            new CommandEntry { Command = "!stats", Response = "{session_stats}" },
+            new CommandEntry { Command = "!lifetime", Response = "{lifetime_stats}" }
         };
     }
 
@@ -2498,6 +2635,37 @@ public partial class MainWindow : Window
         if (!_activeCategoryByLang.ContainsKey(lang))
             _activeCategoryByLang[lang] = general;
         EnsureSettingsForAllCategories();
+    }
+
+    private void EnsureBuiltinInfoTriggers()
+    {
+        EnsureInfoTrigger("!stats", "{session_stats}");
+        EnsureInfoTrigger("!lifetime", "{lifetime_stats}");
+    }
+
+    private void EnsureInfoTrigger(string command, string response)
+    {
+        foreach (string lang in AppLanguageCodes())
+        {
+            string infoName = DefaultCategoryNames(lang).info;
+            string? cat = _commandCategories.Keys.FirstOrDefault(k =>
+                string.Equals(k, infoName, StringComparison.OrdinalIgnoreCase))
+                ?? CategoriesForLanguage(lang).FirstOrDefault();
+            if (string.IsNullOrEmpty(cat)) continue;
+            if (!_commandCategories.TryGetValue(cat, out var byLang) || byLang == null)
+            {
+                byLang = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+                _commandCategories[cat] = byLang;
+            }
+            if (!byLang.TryGetValue(lang, out var list) || list == null)
+            {
+                list = new List<CommandEntry>();
+                byLang[lang] = list;
+            }
+            if (list.Any(e => string.Equals(e.Command, command, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            list.Add(new CommandEntry { Command = command, Response = response });
+        }
     }
 
     private void LoadCommands()
@@ -2526,7 +2694,7 @@ public partial class MainWindow : Window
                 var langs = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
                 foreach (var langKv in catKv.Value)
                 {
-                    if (langKv.Value == null || langKv.Value.Count == 0) continue;
+                    if (langKv.Value == null) continue;
                     langs[langKv.Key] = langKv.Value.Select(e => new CommandEntry
                     {
                         Command = e.Command,
@@ -2558,6 +2726,7 @@ public partial class MainWindow : Window
 
         foreach (string lang in AppLanguageCodes())
             SeedTriggerLanguageIfEmpty(lang);
+        EnsureBuiltinInfoTriggers();
         EnsureSettingsForAllCategories();
 
         BindCategorySettingsToLanguage(_commandLanguage);
@@ -2576,7 +2745,7 @@ public partial class MainWindow : Window
         AppendLog($"Trigger Settings loaded ({total} trigger(s), {_commandCategories.Count} categor(ies))", LogCategory.Info);
     }
 
-    /// <summary>Case-insensitive maps + drop empty language lists left by older builds.</summary>
+    /// <summary>Case-insensitive maps. Empty language lists are kept — a category in EN with 0 triggers is not the RU category of the same name.</summary>
     private static Dictionary<string, Dictionary<string, List<CommandEntry>>> NormalizeCommandCategories(
         Dictionary<string, Dictionary<string, List<CommandEntry>>> raw)
     {
@@ -2588,11 +2757,10 @@ public partial class MainWindow : Window
             foreach (var langKv in catKv.Value)
             {
                 if (string.IsNullOrWhiteSpace(langKv.Key) || langKv.Value == null) continue;
-                // Keep empty lists out of memory/file so language switch never "hides" other langs
-                if (langKv.Value.Count == 0) continue;
                 langs[langKv.Key.Trim()] = langKv.Value;
             }
-            result[catKv.Key.Trim()] = langs;
+            if (langs.Count > 0)
+                result[catKv.Key.Trim()] = langs;
         }
         return result;
     }
@@ -2650,7 +2818,7 @@ public partial class MainWindow : Window
                 var langsMap = new Dictionary<string, List<AppDatabase.TriggerEntryData>>(StringComparer.OrdinalIgnoreCase);
                 foreach (var langKv in catKv.Value)
                 {
-                    if (langKv.Value == null || langKv.Value.Count == 0) continue;
+                    if (langKv.Value == null) continue;
                     langsMap[langKv.Key] = langKv.Value.Select(e => new AppDatabase.TriggerEntryData
                     {
                         Command = e.Command,
@@ -2793,20 +2961,27 @@ public partial class MainWindow : Window
 
     private bool _commandFilterComboQuiet;
 
-    private void PopulateCategoryFilterCombo()
+    private void PopulateCategoryFilterCombo(bool selectAll = false)
     {
         if (CommandCategoryFilterCombo == null) return;
-        string? prevTag = (CommandCategoryFilterCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString()
-                          ?? _commandFilterCategory
-                          ?? "";
+        string? prevTag = selectAll
+            ? ""
+            : (CommandCategoryFilterCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString()
+              ?? _commandFilterCategory
+              ?? "";
         _commandFilterComboQuiet = true;
         try
         {
             CommandCategoryFilterCombo.Items.Clear();
-            CommandCategoryFilterCombo.Items.Add(new ComboBoxItem { Content = "All categories", Tag = "" });
+            CommandCategoryFilterCombo.Items.Add(new ComboBoxItem { Content = "All Categories", Tag = "" });
             foreach (var key in CategoriesForLanguage(_commandLanguage))
                 CommandCategoryFilterCombo.Items.Add(new ComboBoxItem { Content = key, Tag = key });
             SelectCategoryFilterComboCore(prevTag);
+            if (CommandCategoryFilterCombo.SelectedItem is ComboBoxItem selected)
+            {
+                string tag = selected.Tag?.ToString() ?? "";
+                _commandFilterCategory = string.IsNullOrEmpty(tag) ? null : tag;
+            }
         }
         finally { _commandFilterComboQuiet = false; }
     }
@@ -2969,7 +3144,7 @@ public partial class MainWindow : Window
         if (CommandsPageText != null)
             CommandsPageText.Text = $"{_commandsPageIndex + 1}";
         if (CommandsAllFilterBtn != null)
-            CommandsAllFilterBtn.Content = $"All ({allCount})";
+            CommandsAllFilterBtn.Content = $"All Categories ({allCount})";
 
         // Dim pagination when there is nothing that way
         if (CommandsPagePrevBtn != null)
@@ -3138,6 +3313,7 @@ public partial class MainWindow : Window
         ClearModalFieldErrors();
         if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Collapsed;
         if (CommandUpdateCategoryBtn != null) CommandUpdateCategoryBtn.Visibility = Visibility.Collapsed;
+        if (CommandModalAddNewBtn != null) CommandModalAddNewBtn.Visibility = Visibility.Collapsed;
         if (CommandModalSaveBtn != null) CommandModalSaveBtn.Content = "Add Trigger";
         UpdateCommandModalPlaceholders();
         UpdateCommandModalSaveEnabled();
@@ -3151,6 +3327,7 @@ public partial class MainWindow : Window
         HideCategorySubRows();
         ClearModalFieldErrors();
         if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Collapsed;
+        if (CommandModalAddNewBtn != null) CommandModalAddNewBtn.Visibility = Visibility.Collapsed;
         if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Collapsed;
         RefreshCommandsPagedView();
     }
@@ -3175,7 +3352,7 @@ public partial class MainWindow : Window
         SaveAiSettings();
     }
 
-    private void AddCommand_Click(object sender, RoutedEventArgs e)
+    private bool AddCommand_Click(object sender, RoutedEventArgs e)
     {
         // Prefer category from modal combo; fall back to current filter/General
         if (CommandCategoryCombo?.SelectedItem is ComboBoxItem catItem &&
@@ -3191,19 +3368,19 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(rawTrigger))
         {
             AppendLog("Enter a trigger word (e.g. hi).", LogCategory.Warning);
-            return;
+            return false;
         }
         if (string.IsNullOrWhiteSpace(resp))
         {
             AppendLog("Enter a response.", LogCategory.Warning);
-            return;
+            return false;
         }
 
         string cmd = NormalizeCommand(rawTrigger);
         if (string.IsNullOrEmpty(cmd))
         {
             AppendLog("Invalid trigger word.", LogCategory.Warning);
-            return;
+            return false;
         }
 
         if (TryFindCrossCategoryTriggerConflict(cmd, _currentCommandCategory, _commandLanguage, out string otherCat))
@@ -3213,8 +3390,10 @@ public partial class MainWindow : Window
                 $"The trigger word '{TriggerWordForInput(cmd)}' already exists in category '{otherCat}'.\n\n" +
                 "The same command word cannot live in more than one category for the same language.\n" +
                 "Use a different word, or edit/remove it in the other category first.");
-            return;
+            return false;
         }
+        if (TryRejectRepeatTriggerIfDisallowed(cmd, _currentCommandCategory, _commandLanguage))
+            return false;
 
         var underlying = EnsureCommandLangList(_currentCommandCategory);
         var entry = new CommandEntry { Command = cmd, Response = resp };
@@ -3227,6 +3406,7 @@ public partial class MainWindow : Window
         SaveCommands();
         ShowTriggerInList(_currentCommandCategory, cmd, resp);
         AppendLog($"Command added: {cmd} in {_currentCommandCategory}", LogCategory.Info);
+        return true;
     }
 
     private void RemoveCommand_Click(object sender, RoutedEventArgs e)
@@ -3272,6 +3452,8 @@ public partial class MainWindow : Window
                         "The same command word cannot live in more than one category for the same language.");
                     return;
                 }
+                if (TryRejectRepeatTriggerIfDisallowed(newCmd, _currentCommandCategory, _commandLanguage, sel))
+                    return;
                 int idx = underlying.IndexOf(sel);
                 if (idx < 0)
                 {
@@ -3332,6 +3514,8 @@ public partial class MainWindow : Window
                             "The same command word cannot live in more than one category for the same language.");
                         return;
                     }
+                    if (TryRejectRepeatTriggerIfDisallowed(cmd, newCat, _commandLanguage, _editingCommandRow.Entry))
+                        return;
                     MoveCommandToCategory(_editingCommandRow, newCat);
                     _currentCommandCategory = newCat;
                 }
@@ -3369,8 +3553,21 @@ public partial class MainWindow : Window
                         : "Enter a Response.\nA trigger without a response is not allowed.");
             return false;
         }
-        AddCommand_Click(this, new RoutedEventArgs());
-        return true;
+        return AddCommand_Click(this, new RoutedEventArgs());
+    }
+
+    private void CommandModalAddNew_Click(object sender, RoutedEventArgs e)
+    {
+        // Same path as "+ Add Trigger" even when this modal was opened to edit a row.
+        var editing = _editingCommandRow;
+        _editingCommandRow = null;
+        ClearModalFieldErrors();
+        if (!TryAddCommandWithValidation())
+        {
+            _editingCommandRow = editing;
+            return;
+        }
+        CloseCommandModalAfterSave();
     }
 
     private void CloseCommandModalAfterSave()
@@ -3378,6 +3575,7 @@ public partial class MainWindow : Window
         _editingCommandRow = null;
         HideCategorySubRows();
         if (CommandModalDeleteBtn != null) CommandModalDeleteBtn.Visibility = Visibility.Collapsed;
+        if (CommandModalAddNewBtn != null) CommandModalAddNewBtn.Visibility = Visibility.Collapsed;
         if (AddCommandModal != null) AddCommandModal.Visibility = Visibility.Collapsed;
         // Keep current list filter/page (already set when category/trigger was added)
         RefreshCommandsPagedView();
@@ -3403,6 +3601,8 @@ public partial class MainWindow : Window
                 $"Cannot move '{TriggerWordForInput(cmd)}' to '{newCat}':\nit already exists in category '{otherCat}'.");
             return;
         }
+        if (TryRejectRepeatTriggerIfDisallowed(cmd, newCat, _commandLanguage, row.Entry))
+            return;
 
         oldList.RemoveAll(c =>
             string.Equals(c.Command, row.Entry.Command, StringComparison.OrdinalIgnoreCase) &&
@@ -3823,7 +4023,7 @@ public partial class MainWindow : Window
         {
             if (string.IsNullOrWhiteSpace(msg) || !IsBotActive) return;
 
-            if (IsBotOwnMessage(speaker, msg)) return;
+            if (IsOutgoingSelfLabel(speaker) || IsBotOwnMessage(speaker, msg)) return;
 
             // Greet on join — name from join text, avatar alt, or speaker column; each user once per session
             if (ContainsJoinLine(msg))
@@ -3877,7 +4077,6 @@ public partial class MainWindow : Window
 
                 string responseTemplate = PickResponseFromBag(at.Category, at.Trigger, at.Responses);
 
-                // Dynamic session stats for !stats
                 if (string.Equals(at.Trigger, "!stats", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(responseTemplate, "{session_stats}", StringComparison.OrdinalIgnoreCase))
                 {
@@ -3887,6 +4086,18 @@ public partial class MainWindow : Window
                         ? stats
                         : FormatPublicCommandReply(sp, stats, hasNameInTemplate: false, settings.UseNamePrefix);
                     await SendToImvuChat(statsMsg, isWhisper, whisperRowRef, sp, firstCmd, ct: ct);
+                    return;
+                }
+
+                if (string.Equals(at.Trigger, "!lifetime", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(responseTemplate, "{lifetime_stats}", StringComparison.OrdinalIgnoreCase))
+                {
+                    LogCommandTrigger(sp, firstCmd);
+                    string life = BuildLifetimeStatsMessage();
+                    string lifeMsg = isWhisper
+                        ? life
+                        : FormatPublicCommandReply(sp, life, hasNameInTemplate: false, settings.UseNamePrefix);
+                    await SendToImvuChat(lifeMsg, isWhisper, whisperRowRef, sp, firstCmd, ct: ct);
                     return;
                 }
 
@@ -3914,15 +4125,10 @@ public partial class MainWindow : Window
         if (!string.IsNullOrWhiteSpace(joinUserId))
             _uidDisplayNames[joinUserId] = joiner;
 
-        if (!string.IsNullOrWhiteSpace(joinUserId))
-        {
-            if (!_greetedUserIds.Add(joinUserId))
-                return;
-        }
-        else if (!_greetedJoinersByName.Add(joiner))
-        {
+        if (!string.IsNullOrWhiteSpace(joinUserId) && !_greetedUserIds.Add(joinUserId))
             return;
-        }
+        if (!string.IsNullOrWhiteSpace(joiner) && !_greetedJoinersByName.Add(joiner))
+            return;
 
         if (!_welcome1Enabled && !_welcome2Enabled)
             return;
@@ -3963,11 +4169,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(whisperRowRef) && string.IsNullOrWhiteSpace(joinUserId))
-        {
-            AppendActivityLog($"[Whisper] skipped {joiner} - no join row/uid", LogCategory.Warning);
+        if (string.IsNullOrWhiteSpace(joinUserId))
+            joinUserId = LookupRoomUserIdByName(joiner);
+        if (string.IsNullOrWhiteSpace(joinUserId))
             return;
-        }
 
         string? whisperResult = await SendToImvuChat(text, whisperReply: true, whisperRowRef: whisperRowRef,
             whisperSpeaker: joiner, proactiveWhisperToUser: true, joinUserId: joinUserId, ct: ct);
@@ -4524,6 +4729,8 @@ return results.slice(-maxLines);
             await ShowExitSplashAndHoldAsync();
 
             try { SaveRecorderSettings(); } catch { }
+            try { PersistOperatorIdentity(); } catch { }
+            try { FlushLifetimeFromSession(); } catch { }
             try { SaveDmMessages(); } catch { }
             AppendLog(reason + " — stopping companion and leaving room…", LogCategory.Info);
             if (_botRunning)

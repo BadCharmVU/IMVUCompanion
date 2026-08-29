@@ -148,7 +148,7 @@ public partial class MainWindow
 
     /// <summary>
     /// Same normalized trigger must not exist in another category for the same language.
-    /// Multiple responses for the same trigger in the same category are allowed.
+    /// Same-category duplicates are gated by Allow Multiple Replies (see TryRejectRepeatTriggerIfDisallowed).
     /// </summary>
     /// <param name="excludeCategory">
     /// Category to ignore (e.g. source category when moving a trigger so it is not a false conflict).
@@ -179,17 +179,66 @@ public partial class MainWindow
         return false;
     }
 
-    private void ShowBotSettingsError(string title, string message)
+    /// <summary>
+    /// When Allow Multiple Replies is off, the same trigger cannot have a second row in this
+    /// category + language. Returns true if the add/update was rejected and an error was shown.
+    /// </summary>
+    private bool TryRejectRepeatTriggerIfDisallowed(
+        string trigger, string category, string lang, CommandEntry? exclude = null)
     {
+        if (GetOrCreateCategorySettings(category).AllowRepeatTriggers)
+            return false;
+        string cmd = NormalizeCommand(trigger);
+        if (string.IsNullOrEmpty(cmd)) return false;
+        if (!_commandCategories.TryGetValue(category, out var langs) || langs == null)
+            return false;
+        foreach (var e in GetCommandLangListOrEmpty(langs, lang))
+        {
+            if (exclude != null && ReferenceEquals(e, exclude)) continue;
+            if (string.Equals(NormalizeCommand(e.Command), cmd, StringComparison.OrdinalIgnoreCase))
+            {
+                ShowBotSettingsError(
+                    "Multiple replies not allowed",
+                    $"Category '{category}' does not allow multiple replies.\n" +
+                    $"The trigger '{TriggerWordForInput(cmd)}' is already in this category.\n" +
+                    "Enable Allow Multiple Replies to add another response for the same trigger.",
+                    editCategory: category);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private string? _botSettingsErrorEditCategory;
+
+    private void ShowBotSettingsError(string title, string message, string? editCategory = null)
+    {
+        _botSettingsErrorEditCategory = string.IsNullOrWhiteSpace(editCategory) ? null : editCategory.Trim();
         if (BotSettingsErrorTitle != null) BotSettingsErrorTitle.Text = title;
         if (BotSettingsErrorMessage != null) BotSettingsErrorMessage.Text = message;
+        if (BotSettingsErrorEditCategoryBtn != null)
+            BotSettingsErrorEditCategoryBtn.Visibility =
+                _botSettingsErrorEditCategory == null ? Visibility.Collapsed : Visibility.Visible;
         if (BotSettingsErrorOverlay != null) BotSettingsErrorOverlay.Visibility = Visibility.Visible;
     }
 
     private void BotSettingsErrorOk_Click(object sender, RoutedEventArgs e)
     {
+        _botSettingsErrorEditCategory = null;
+        if (BotSettingsErrorEditCategoryBtn != null)
+            BotSettingsErrorEditCategoryBtn.Visibility = Visibility.Collapsed;
         if (BotSettingsErrorOverlay != null)
             BotSettingsErrorOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void BotSettingsErrorEditCategory_Click(object sender, RoutedEventArgs e)
+    {
+        string cat = _botSettingsErrorEditCategory ?? "";
+        BotSettingsErrorOk_Click(sender, e);
+        if (string.IsNullOrEmpty(cat) || !CategoryExistsForCurrentLanguage(cat)) return;
+        _currentCommandCategory = cat;
+        SetCommandCategoryComboQuiet(cat);
+        OpenCategoryEditorModal(isAdd: false, categoryName: cat);
     }
 
     private string PickResponseFromBag(string category, string trigger, List<string> responses)

@@ -162,7 +162,24 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
     function getJoinRowWrapper(row) {
         return getSystemRowWrapper(row, 'join');
     }
-    function emitJoin(j) {
+    function leftThisVisit(userId, name) {
+        try {
+            if (userId && window._seenLeaveUids && window._seenLeaveUids.has(userId)) return true;
+        } catch (e) {}
+        try {
+            if (name && window._seenLeaveNames &&
+                window._seenLeaveNames.has(String(name).toLowerCase())) return true;
+        } catch (e) {}
+        return false;
+    }
+    function forgetLeftThisVisit(userId, name) {
+        try { if (userId && window._seenLeaveUids) window._seenLeaveUids.delete(userId); } catch (e) {}
+        try {
+            if (name && window._seenLeaveNames)
+                window._seenLeaveNames.delete(String(name).toLowerCase());
+        } catch (e) {}
+    }
+    function emitJoin(j, live) {
         if (!j || !j.row) return;
         let name = keepEnteredName(j.name);
         if (!name) name = keepEnteredName(nameFromJoinLine(j.text));
@@ -172,13 +189,13 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
         const userId = extractUserIdFromWrapper(wrapper);
         if (!name && !userId) return;
         if (isSelfIdentity(name, userId, wrapper)) return;
+        if (leftThisVisit(userId, name)) {
+            if (!live) return;
+            forgetLeftThisVisit(userId, name);
+        }
         if (window._seenJoinRows.has(wrapper)) return;
         if (rememberSeenUid('join', userId)) return;
-        try { if (userId && window._seenLeaveUids) window._seenLeaveUids.delete(userId); } catch (e) {}
-        try {
-            if (name && window._seenLeaveNames)
-                window._seenLeaveNames.delete(String(name).toLowerCase());
-        } catch (e) {}
+        forgetLeftThisVisit(userId, name);
         window._seenJoinRows.add(wrapper);
         let joinRef = 'j' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
         try {
@@ -251,7 +268,7 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
         window[key].add(uid);
         return false;
     }
-    function emitTyped(j, kind) {
+    function emitTyped(j, kind, live) {
         if (!j || !j.row) return;
         const wrapper = getSystemRowWrapper(j.row, kind) || j.row;
         const seenKey = kind === 'leave' ? '_seenLeaveRows' : '_seenPresentRows';
@@ -272,14 +289,12 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
                 window._seenLeaveNames.add(nk);
             }
             try { if (userId && window._seenJoinUids) window._seenJoinUids.delete(userId); } catch (e) {}
-            try { if (userId && window._seenPresentUids) window._seenPresentUids.delete(userId); } catch (e) {}
+        } else if (kind === 'present') {
+            if (leftThisVisit(userId, name)) return;
+            if (rememberSeenUid('present', userId)) return;
         } else {
             if (rememberSeenUid(kind, userId)) return;
-            try { if (userId && window._seenLeaveUids) window._seenLeaveUids.delete(userId); } catch (e) {}
-            try {
-                if (name && window._seenLeaveNames)
-                    window._seenLeaveNames.delete(String(name).toLowerCase());
-            } catch (e) {}
+            if (live) forgetLeftThisVisit(userId, name);
         }
         window[seenKey].add(wrapper);
         let rowRef = kind.charAt(0) + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
@@ -289,8 +304,8 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
         } catch(e) {}
         post(name + "\t" + j.text + "\t" + kind + "\t" + rowRef + "\t" + (userId || ''));
     }
-    function emitLeave(j) { emitTyped(j, 'leave'); }
-    function emitPresent(j) { emitTyped(j, 'present'); }
+    function emitLeave(j, live) { emitTyped(j, 'leave', !!live); }
+    function emitPresent(j, live) { emitTyped(j, 'present', !!live); }
     function getPlainChatFromRow(row) {
         const wrapper = getMessageWrapper(row) || row;
         const raw = (wrapper.innerText || wrapper.textContent || '');
@@ -312,6 +327,7 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
         if (getCommandTextFromRow(wrapper)) return;
         const text = getPlainChatFromRow(wrapper);
         if (!text) return;
+        if (isMyUserNode(wrapper)) return;
         const speaker = getSpeakerFromItem(wrapper);
         if (!isValidSpeaker(speaker)) return;
         const whisper = isWhisperMessage(wrapper);
@@ -367,11 +383,11 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
         const start = Math.max(0, rows.length - 80);
         for (let i = rows.length - 1; i >= start; i--) {
             const leave = parseLeaveRow(rows[i]);
-            if (leave) { emitLeave(leave); continue; }
+            if (leave) { emitLeave(leave, false); continue; }
             const present = parsePresentRow(rows[i]);
-            if (present) { emitPresent(present); continue; }
+            if (present) { emitPresent(present, false); continue; }
             const j = parseJoinRow(rows[i]);
-            if (j) emitJoin(j);
+            if (j) emitJoin(j, false);
         }
     }
     function findSystemInAddedNode(n) {
@@ -437,6 +453,7 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
         if (!sp || sp.length < 1 || sp.length > 50) return false;
         if (sp.includes('!')) return false;
         if (/commands:/i.test(sp)) return false;
+        if (/^you(\s+to\s+|\s*$)/i.test(sp)) return false;
         if (/^\s|\s{2,}/.test(sp.replace(/\s+to\s+me$/i, ''))) return false;
         return true;
     }
@@ -457,6 +474,7 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
         if (batchRows) batchRows.add(wrapper);
         const cmdText = getCommandTextFromRow(wrapper);
         if (!cmdText) return;
+        if (isMyUserNode(wrapper)) return;
         const speaker = getSpeakerFromItem(wrapper);
         if (!isValidSpeaker(speaker)) return;
         const whisper = isWhisperMessage(wrapper);
@@ -488,9 +506,9 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
                 if (n.nodeType !== 1 && n.nodeType !== 3) continue;
                 const sys = findSystemInAddedNode(n);
                 if (sys) {
-                    if (sys.kind === 'leave') emitLeave(sys.item);
-                    else if (sys.kind === 'present') emitPresent(sys.item);
-                    else emitJoin(sys.item);
+                    if (sys.kind === 'leave') emitLeave(sys.item, true);
+                    else if (sys.kind === 'present') emitPresent(sys.item, true);
+                    else emitJoin(sys.item, true);
                     continue;
                 }
                 let el = n.nodeType === 3 ? n.parentElement : n;

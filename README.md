@@ -2,9 +2,9 @@
 
 Windows desktop companion for **IMVU Next** chat rooms. IMVU runs inside the app (WebView2). The companion can greet joiners, answer `!commands`, record AFK notes, send notices to people in the room, and check for updates automatically.
 
-**Current release:** [v0.9.96](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
+**Current release:** [v0.9.97](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
 
-Download **`IMVUCompanion-Setup-v0.9.96.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
+Download **`IMVUCompanion-Setup-v0.9.97.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
 
 ---
 
@@ -139,12 +139,12 @@ Update channel: public `version.json` gist referenced by the app (see `AppVersio
 
 ---
 
-## Recent changes (v0.9.92)
+## Recent changes (v0.9.97)
 
-- **Room roster** — live list of people in the room; message (public or whisper) or Remove User
-- Rejoins always show in the list and Activity Log, with a visit count
-- Welcome header distinguishes Greeting vs 2nd-message-only (“talking”)
-- Section open/closed state is remembered more reliably
+- Status bar SESSION / LIFETIME stats
+- Default `!stats` and `!lifetime` triggers
+- Trigger list, categories, and editors
+- Recorder answering settings and Room Console remove confirm
 
 See [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases) for full notes per version.
 

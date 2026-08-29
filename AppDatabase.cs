@@ -77,6 +77,7 @@ internal static class AppDatabase
     public sealed class RecorderData
     {
         public string Trigger { get; set; } = "RMsg";
+        public bool Enabled { get; set; }
         public bool ConfirmReceipt { get; set; } = true;
         public List<RecorderUserData> Users { get; set; } = new();
         public Dictionary<string, List<string>> AnsweringByLang { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -142,6 +143,7 @@ internal static class AppDatabase
                 cmd.ExecuteScalar();
             }
             CreateSchema();
+            EnsureColumn("recorder_settings", "enabled", "enabled INTEGER NOT NULL DEFAULT 0");
             if (!IsFlag("initialized"))
             {
                 SetFlag("initialized", true);
@@ -394,7 +396,7 @@ internal static class AppDatabase
         lock (Gate)
         {
             var data = new RecorderData();
-            using (var cmd = Cmd("SELECT trigger, confirm_receipt FROM recorder_settings WHERE id = 1"))
+            using (var cmd = Cmd("SELECT trigger, confirm_receipt, enabled FROM recorder_settings WHERE id = 1"))
             using (var r = cmd.ExecuteReader())
             {
                 if (r.Read())
@@ -402,6 +404,7 @@ internal static class AppDatabase
                     string t = r.IsDBNull(0) ? "" : r.GetString(0);
                     if (!string.IsNullOrWhiteSpace(t)) data.Trigger = t;
                     data.ConfirmReceipt = r.GetInt32(1) != 0;
+                    data.Enabled = !r.IsDBNull(2) && r.GetInt32(2) != 0;
                 }
             }
 
@@ -447,9 +450,10 @@ internal static class AppDatabase
         lock (Gate)
         {
             using var tx = Conn.BeginTransaction();
-            ExecTx(tx, "INSERT INTO recorder_settings (id, trigger, confirm_receipt) VALUES (1, @t, @c) ON CONFLICT(id) DO UPDATE SET trigger=@t, confirm_receipt=@c",
+            ExecTx(tx, "INSERT INTO recorder_settings (id, trigger, confirm_receipt, enabled) VALUES (1, @t, @c, @e) ON CONFLICT(id) DO UPDATE SET trigger=@t, confirm_receipt=@c, enabled=@e",
                 ("@t", string.IsNullOrWhiteSpace(data.Trigger) ? "RMsg" : data.Trigger),
-                ("@c", data.ConfirmReceipt ? 1 : 0));
+                ("@c", data.ConfirmReceipt ? 1 : 0),
+                ("@e", data.Enabled ? 1 : 0));
             ExecTx(tx, "DELETE FROM recorder_messages");
             ExecTx(tx, "DELETE FROM recorder_users");
             int uOrder = 0;
@@ -789,7 +793,8 @@ internal static class AppDatabase
             @"CREATE TABLE IF NOT EXISTS recorder_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 trigger TEXT NOT NULL DEFAULT 'RMsg',
-                confirm_receipt INTEGER NOT NULL DEFAULT 1)",
+                confirm_receipt INTEGER NOT NULL DEFAULT 1,
+                enabled INTEGER NOT NULL DEFAULT 0)",
             @"CREATE TABLE IF NOT EXISTS recorder_users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -1260,6 +1265,20 @@ internal static class AppDatabase
         return cmd;
     }
 
+    private static void EnsureColumn(string table, string column, string addSql)
+    {
+        using (var cmd = Cmd($"PRAGMA table_info({table})"))
+        using (var r = cmd.ExecuteReader())
+        {
+            while (r.Read())
+            {
+                if (string.Equals(r.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+                    return;
+            }
+        }
+        Exec("ALTER TABLE " + table + " ADD COLUMN " + addSql);
+    }
+
     private static void Exec(string sql, params (string name, object value)[] args)
     {
         using var cmd = Cmd(sql);
@@ -1289,6 +1308,22 @@ internal static class AppDatabase
         cmd.Parameters.AddWithValue("@k", key);
         var v = cmd.ExecuteScalar() as string;
         return v == "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static string ReadMeta(string key)
+    {
+        lock (Gate)
+        {
+            using var cmd = Cmd("SELECT value FROM meta WHERE key = @k");
+            cmd.Parameters.AddWithValue("@k", key);
+            return cmd.ExecuteScalar() as string ?? "";
+        }
+    }
+
+    public static void WriteMeta(string key, string value)
+    {
+        lock (Gate)
+            SetMeta(key, value ?? "");
     }
 
     private static void SetFlag(string key, bool value) => SetMeta(key, value ? "1" : "0");

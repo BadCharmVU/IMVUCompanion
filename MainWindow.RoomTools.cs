@@ -11,6 +11,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace IMVUCompanion;
 
@@ -69,9 +70,11 @@ public partial class MainWindow
     private bool _dmUiSyncing;
     private bool _dmAsWhisper;
     private bool _chipMessagePrefix = true;
+    private string _chipMessageMode = "public";
     private string _recorderTrigger = "RMsg";
     private string? _selectedRoomUserKey;
     private readonly List<RoomUserVm> _roomUsers = new();
+    private readonly HashSet<string> _leftThisRoom = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _roomEnterCounts = new(StringComparer.Ordinal);
     private readonly ObservableCollection<RecorderUserVm> _recorderUsers = new();
     private readonly ObservableCollection<DmMessageEntry> _dmMessages = new();
@@ -91,6 +94,7 @@ public partial class MainWindow
     private string? _recorderSelectedMessageId;
     private readonly List<RecorderRowChrome> _recorderRows = new();
     private RoomUserVm? _chipMessageUser;
+    private RoomUserVm? _pendingRemoveUser;
     private readonly List<PendingRemove> _pendingRemoves = new();
 
     private sealed class PendingRemove
@@ -114,14 +118,17 @@ public partial class MainWindow
 
     private void InitRoomTools()
     {
+        LoadOperatorIdentity();
         LoadRecorderSettings();
+        PruneSelfFromRecorder();
         LoadDmMessages();
         if (RecorderTriggerBox != null)
             RecorderTriggerBox.Text = _recorderTrigger;
+        _recorderReady = false;
         if (RecorderEnabledCheck != null)
-            RecorderEnabledCheck.IsChecked = false;
-        _recorderEnabled = false;
-        UpdateRecorderHint();
+            RecorderEnabledCheck.IsChecked = _recorderEnabled;
+        ApplyRecorderEnabledUi();
+        _recorderReady = true;
         RefreshRecorderUsersUi();
         RefreshDmMessageCombo();
         UpdateDmSendButton();
@@ -147,7 +154,30 @@ public partial class MainWindow
             RecorderHeaderRoot.Width = w;
     }
 
-    private void DmSettingsExpander_SizeChanged(object sender, SizeChangedEventArgs e) => LayoutDmSettingsHeader();
+    private double _dmSectionLastHeight;
+
+    private void DmSettingsExpander_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        LayoutDmSettingsHeader();
+        if (_applyingExpanderLayout || DmSettingsExpander?.IsExpanded != true)
+        {
+            _dmSectionLastHeight = DmSettingsExpander?.ActualHeight ?? 0;
+            return;
+        }
+        double h = DmSettingsExpander.ActualHeight;
+        bool grew = h > _dmSectionLastHeight + 10;
+        _dmSectionLastHeight = h;
+        if (!grew) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            try
+            {
+                DmSettingsExpander.UpdateLayout();
+                ScrollSectionIntoView(DmSettingsExpander);
+            }
+            catch { }
+        }, DispatcherPriority.Loaded);
+    }
     private void DmSettingsExpander_Layout(object sender, RoutedEventArgs e) => LayoutDmSettingsHeader();
 
     private void LayoutDmSettingsHeader()
@@ -174,10 +204,8 @@ public partial class MainWindow
         LayoutRecorderHeader();
     }
 
-    private void RecorderEnabledCheck_Changed(object sender, RoutedEventArgs e)
+    private void ApplyRecorderEnabledUi()
     {
-        if (!_recorderReady) return;
-        _recorderEnabled = RecorderEnabledCheck?.IsChecked == true;
         var vis = _recorderEnabled ? Visibility.Visible : Visibility.Collapsed;
         if (RecorderTriggerBox != null)
             RecorderTriggerBox.Visibility = vis;
@@ -186,6 +214,14 @@ public partial class MainWindow
         if (RecorderAnswerGearBtn != null)
             RecorderAnswerGearBtn.Visibility = vis;
         UpdateRecorderHint();
+    }
+
+    private void RecorderEnabledCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!_recorderReady) return;
+        _recorderEnabled = RecorderEnabledCheck?.IsChecked == true;
+        ApplyRecorderEnabledUi();
+        SaveRecorderSettings();
     }
 
     private void RecorderTriggerBox_LostFocus(object sender, RoutedEventArgs e)
@@ -211,6 +247,7 @@ public partial class MainWindow
     private void LoadRecorderSettings()
     {
         _recorderReady = false;
+        _recorderEnabled = false;
         _recorderTrigger = "RMsg";
         _recorderUsers.Clear();
         _recorderByName.Clear();
@@ -225,6 +262,7 @@ public partial class MainWindow
             if (!string.IsNullOrEmpty(t))
                 _recorderTrigger = t;
             _confirmReceipt = data.ConfirmReceipt;
+            _recorderEnabled = data.Enabled;
             foreach (var row in data.Users)
             {
                 if (row == null || string.IsNullOrWhiteSpace(row.Name)) continue;
@@ -284,6 +322,7 @@ public partial class MainWindow
             AppDatabase.SaveRecorder(new AppDatabase.RecorderData
             {
                 Trigger = _recorderTrigger,
+                Enabled = _recorderEnabled,
                 ConfirmReceipt = _confirmReceipt,
                 Users = _recorderUsers.Select(u => new AppDatabase.RecorderUserData
                 {
@@ -628,39 +667,29 @@ public partial class MainWindow
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 2, 4, 0)
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 4, 0)
         };
+        var glyphStyle = TryFindResource("RowGlyphButton") as Style;
         var replyBtn = new Button
         {
             Content = "↩",
-            Width = 22,
-            Height = 22,
-            Padding = new Thickness(0),
+            Style = glyphStyle,
+            Margin = new Thickness(0, 0, 2, 0),
             FontSize = 12,
             ToolTip = "Reply",
             Tag = (user, line),
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Foreground = new SolidColorBrush(Color.FromRgb(0xA0, 0xB0, 0xFF)),
-            Cursor = System.Windows.Input.Cursors.Hand,
-            Focusable = false
+            Foreground = new SolidColorBrush(Color.FromRgb(0xA0, 0xB0, 0xFF))
         };
         replyBtn.Click += RecorderReply_Click;
         var delBtn = new Button
         {
             Content = "🗑",
-            Width = 22,
-            Height = 22,
-            Padding = new Thickness(0),
+            Style = glyphStyle,
             FontSize = 11,
             ToolTip = "Delete",
             Tag = (user, line),
-            Background = Brushes.Transparent,
-            BorderThickness = new Thickness(0),
-            Foreground = new SolidColorBrush(Color.FromRgb(0xF8, 0x71, 0x71)),
-            Cursor = System.Windows.Input.Cursors.Hand,
-            Focusable = false
+            Foreground = new SolidColorBrush(Color.FromRgb(0xF8, 0x71, 0x71))
         };
         delBtn.Click += RecorderDelete_Click;
         actions.Children.Add(replyBtn);
@@ -755,8 +784,11 @@ public partial class MainWindow
             RecorderReplyModal.Visibility = Visibility.Visible;
     }
 
-    private void RecorderReplyBox_TextChanged(object sender, TextChangedEventArgs e) =>
+    private void RecorderReplyBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        MessageEditBox_TextChanged(sender, e);
         UpdateRecorderReplyCount();
+    }
 
     private void UpdateRecorderReplyCount()
     {
@@ -1162,7 +1194,7 @@ public partial class MainWindow
                 proactiveWhisperToUser: true, joinUserId: user.UserId,
                 requireBotActive: false, logSend: false);
             if (result == "ok")
-                AppendActivityLog($"[W.DM] {user.Name} {body}", LogCategory.WhisperDm);
+                AppendActivityLog($"[Sent W.DM] {user.Name} {body}", LogCategory.Whisper);
             else
                 AppendLog("Whisper DM failed: " + (result ?? "unknown"), LogCategory.Warning);
         }
@@ -1171,7 +1203,7 @@ public partial class MainWindow
             body = PrefixPublicDm(user.Name, body);
             result = await SendToImvuChat(body, requireBotActive: false, logSend: false);
             if (result == "ok")
-                AppendActivityLog($"[P.DM] {user.Name} {body}", LogCategory.PublicDm);
+                AppendActivityLog($"[Sent P.DM] {user.Name} {body}", LogCategory.Sent);
             else
                 AppendLog("Public DM failed: " + (result ?? "unknown"), LogCategory.Warning);
         }
@@ -1183,9 +1215,20 @@ public partial class MainWindow
         return _roomUsers.FirstOrDefault(u => u.Key == _selectedRoomUserKey);
     }
 
+    private static bool IsOutgoingSelfLabel(string? name)
+    {
+        string s = (name ?? "").Trim();
+        if (s.Length == 0) return false;
+        if (s.Equals("You", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.StartsWith("You to ", StringComparison.OrdinalIgnoreCase)) return true;
+        if (s.StartsWith("You whisper", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
+    }
+
     private bool IsSelfName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return false;
+        if (IsOutgoingSelfLabel(name)) return true;
         string fold = FoldImvuName(name);
         if (string.IsNullOrEmpty(fold)) return false;
         if (!string.IsNullOrWhiteSpace(_botDisplayName) &&
@@ -1195,6 +1238,32 @@ public partial class MainWindow
             fold == FoldImvuName(_selfDetectedName))
             return true;
         return false;
+    }
+
+    private void LoadOperatorIdentity()
+    {
+        try
+        {
+            string uid = AppDatabase.ReadMeta("operator_uid").Trim();
+            string name = AppDatabase.ReadMeta("operator_name").Trim();
+            if (!string.IsNullOrEmpty(uid))
+                _selfDetectedUid = uid;
+            if (!string.IsNullOrEmpty(name))
+                _selfDetectedName = name;
+        }
+        catch { }
+    }
+
+    private void PersistOperatorIdentity()
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(_selfDetectedUid))
+                AppDatabase.WriteMeta("operator_uid", _selfDetectedUid.Trim());
+            if (!string.IsNullOrWhiteSpace(_selfDetectedName))
+                AppDatabase.WriteMeta("operator_name", _selfDetectedName.Trim());
+        }
+        catch { }
     }
 
     private bool IsSelfUserId(string? userId)
@@ -1230,6 +1299,7 @@ public partial class MainWindow
         if (string.Equals(FoldImvuName(_selfDetectedName), FoldImvuName(name), StringComparison.Ordinal))
             return;
         _selfDetectedName = name.Trim();
+        PersistOperatorIdentity();
         PruneSelfFromRoster();
         PruneSelfFromRecorder();
     }
@@ -1271,6 +1341,7 @@ public partial class MainWindow
             }
             if (changed)
             {
+                PersistOperatorIdentity();
                 PruneSelfFromRoster();
                 PruneSelfFromRecorder();
             }
@@ -1330,7 +1401,12 @@ public partial class MainWindow
             existing.Key = "uid:" + uid;
             changed = true;
         }
-        if (!IsInvisibleRoomName(display) &&
+        if (IsInvisibleRoomName(existing.Name) && !string.IsNullOrEmpty(uid))
+        {
+            existing.Name = uid;
+            changed = true;
+        }
+        else if (!IsInvisibleRoomName(display) &&
             !string.Equals(existing.Name, display, StringComparison.Ordinal))
         {
             existing.Name = display;
@@ -1346,6 +1422,9 @@ public partial class MainWindow
         if (string.IsNullOrWhiteSpace(userId)) return;
         if (string.Equals(_selfDetectedUid, userId.Trim(), StringComparison.Ordinal)) return;
         _selfDetectedUid = userId.Trim();
+        if (!string.IsNullOrWhiteSpace(name) && !IsOutgoingSelfLabel(name))
+            _selfDetectedName = name.Trim();
+        PersistOperatorIdentity();
         PruneSelfFromRoster();
         PruneSelfFromRecorder();
     }
@@ -1356,7 +1435,8 @@ public partial class MainWindow
         for (int i = _recorderUsers.Count - 1; i >= 0; i--)
         {
             var u = _recorderUsers[i];
-            if (!IsSelfName(u.Name) && !IsSelfUserId(u.UserId)) continue;
+            if (!IsSelfName(u.Name) && !IsSelfUserId(u.UserId) && !IsOutgoingSelfLabel(u.Name))
+                continue;
             _recorderUsers.RemoveAt(i);
             _recorderByName.Remove(u.Name);
             if (!string.IsNullOrEmpty(u.UserId))
@@ -1388,10 +1468,43 @@ public partial class MainWindow
     {
         _pendingRemoves.Clear();
         _roomEnterCounts.Clear();
+        _leftThisRoom.Clear();
         if (_roomUsers.Count == 0 && _selectedRoomUserKey == null) return;
         _roomUsers.Clear();
         _selectedRoomUserKey = null;
         RefreshRoomUsersUi();
+    }
+
+    private static IEnumerable<string> RoomLeaveKeys(string name, string? userId)
+    {
+        string uid = (userId ?? "").Trim();
+        if (!string.IsNullOrEmpty(uid))
+            yield return "uid:" + uid;
+        string fold = FoldImvuName(SanitizeJoinerName(name));
+        if (!string.IsNullOrEmpty(fold))
+            yield return "name:" + fold;
+    }
+
+    private void MarkLeftThisRoom(string name, string? userId)
+    {
+        foreach (string key in RoomLeaveKeys(name, userId))
+            _leftThisRoom.Add(key);
+    }
+
+    private void ForgetLeftThisRoom(string name, string? userId)
+    {
+        foreach (string key in RoomLeaveKeys(name, userId))
+            _leftThisRoom.Remove(key);
+    }
+
+    private bool LeftThisRoom(string name, string? userId)
+    {
+        foreach (string key in RoomLeaveKeys(name, userId))
+        {
+            if (_leftThisRoom.Contains(key))
+                return true;
+        }
+        return false;
     }
 
     private static string RoomEnterCountKey(string name, string? userId)
@@ -1443,10 +1556,6 @@ public partial class MainWindow
             var row = new Grid { Margin = new Thickness(3) };
 
             string chipText = RoomUserLabel(user);
-            if (string.IsNullOrWhiteSpace(chipText) && !string.IsNullOrWhiteSpace(user.UserId))
-                chipText = user.UserId;
-            if (string.IsNullOrWhiteSpace(chipText))
-                chipText = "?";
 
             var btn = new Button
             {
@@ -1538,8 +1647,27 @@ public partial class MainWindow
     private void RoomUserRemove_Preview(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         e.Handled = true;
-        if (sender is Button btn)
-            _ = RemoveRoomUserFromRoomAsync(btn);
+        if (sender is not Button { Tag: RoomUserVm user }) return;
+        _pendingRemoveUser = user;
+        if (RoomUserRemoveName != null)
+            RoomUserRemoveName.Text = RoomUserLabel(user);
+        if (RoomUserRemoveModal != null)
+            RoomUserRemoveModal.Visibility = Visibility.Visible;
+    }
+
+    private void RoomUserRemoveCancel_Click(object sender, RoutedEventArgs e)
+    {
+        _pendingRemoveUser = null;
+        if (RoomUserRemoveModal != null)
+            RoomUserRemoveModal.Visibility = Visibility.Collapsed;
+    }
+
+    private void RoomUserRemoveConfirm_Click(object sender, RoutedEventArgs e)
+    {
+        var user = _pendingRemoveUser;
+        RoomUserRemoveCancel_Click(sender, e);
+        if (user != null)
+            _ = RemoveRoomUserFromRoomAsync(user);
     }
 
     private void OpenRoomUserMessageModal(RoomUserVm user)
@@ -1550,14 +1678,14 @@ public partial class MainWindow
             RoomUserMessageTitle.Text = "Message to " + label;
         if (RoomUserMessageBox != null)
             RoomUserMessageBox.Text = "";
-        if (RoomUserMessagePrefixCheck != null)
+        _dmUiSyncing = true;
+        try
         {
-            _dmUiSyncing = true;
-            RoomUserMessagePrefixCheck.IsChecked = _chipMessagePrefix;
-            _dmUiSyncing = false;
+            if (RoomUserMessagePrefixCheck != null)
+                RoomUserMessagePrefixCheck.IsChecked = _chipMessagePrefix;
+            SelectRoomUserMessageMode(_chipMessageMode);
         }
-        if (RoomUserMessageModeCombo != null && RoomUserMessageModeCombo.Items.Count > 0)
-            RoomUserMessageModeCombo.SelectedIndex = 0;
+        finally { _dmUiSyncing = false; }
         UpdateRoomUserMessageModeUi();
         UpdateRoomUserMessageCount();
         if (RoomUserMessageModal != null)
@@ -1583,8 +1711,11 @@ public partial class MainWindow
         SaveDmMessages();
     }
 
-    private void RoomUserMessageBox_TextChanged(object sender, TextChangedEventArgs e) =>
+    private void RoomUserMessageBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        MessageEditBox_TextChanged(sender, e);
         UpdateRoomUserMessageCount();
+    }
 
     private void UpdateRoomUserMessageCount()
     {
@@ -1602,9 +1733,27 @@ public partial class MainWindow
         return "public";
     }
 
+    private void SelectRoomUserMessageMode(string mode)
+    {
+        if (RoomUserMessageModeCombo == null) return;
+        if (string.IsNullOrEmpty(mode)) mode = "public";
+        foreach (ComboBoxItem item in RoomUserMessageModeCombo.Items)
+        {
+            if (item.Tag is string t && t == mode)
+            {
+                RoomUserMessageModeCombo.SelectedItem = item;
+                return;
+            }
+        }
+        if (RoomUserMessageModeCombo.Items.Count > 0)
+            RoomUserMessageModeCombo.SelectedIndex = 0;
+    }
+
     private void RoomUserMessageMode_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (!_dmReady && RoomUserMessageModal == null) return;
+        if (!_dmUiSyncing)
+            _chipMessageMode = SelectedRoomUserMessageMode();
         UpdateRoomUserMessageModeUi();
     }
 
@@ -1643,39 +1792,36 @@ public partial class MainWindow
         }
 
         var user = _chipMessageUser;
+        string sent = _chipMessagePrefix ? PrefixPublicDm(user.Name, body) : body;
         string? result;
         if (mode == "whisper")
         {
-            result = await SendToImvuChat(body, whisperReply: true, whisperSpeaker: user.Name,
+            result = await SendToImvuChat(sent, whisperReply: true, whisperSpeaker: user.Name,
                 proactiveWhisperToUser: true, joinUserId: user.UserId,
                 requireBotActive: false, logSend: false);
             if (result == "ok")
-                AppendActivityLog($"[W.DM] {user.Name} {body}", LogCategory.WhisperDm);
+                AppendActivityLog($"[Sent W.DM] {user.Name} {sent}", LogCategory.Whisper);
             else
                 AppendLog("Whisper failed: " + (result ?? "unknown"), LogCategory.Warning);
         }
         else
         {
-            string sent = _chipMessagePrefix ? PrefixPublicDm(user.Name, body) : body;
             result = await SendToImvuChat(sent, requireBotActive: false, logSend: false);
             if (result == "ok")
-                AppendActivityLog($"[P.DM] {user.Name} {sent}", LogCategory.PublicDm);
+                AppendActivityLog($"[Sent P.DM] {user.Name} {sent}", LogCategory.Sent);
             else
                 AppendLog("Public send failed: " + (result ?? "unknown"), LogCategory.Warning);
         }
 
         if (result == "ok")
+        {
+            _chipMessageMode = mode;
             CloseRoomUserMessageModal();
+        }
     }
 
-    private async Task RemoveRoomUserFromRoomAsync(Button btn)
+    private async Task RemoveRoomUserFromRoomAsync(RoomUserVm user)
     {
-        if (btn.Tag is not RoomUserVm user)
-        {
-            AppendActivityLog("[REMOVE] ignored — no user on button", LogCategory.Warning);
-            return;
-        }
-
         string label = RoomUserLabel(user);
         string uid = (user.UserId ?? "").Trim();
         if (string.IsNullOrEmpty(uid) && Regex.IsMatch(label, @"^\d{5,}$"))
@@ -1827,6 +1973,9 @@ public partial class MainWindow
             {
                 string label = !IsInvisibleRoomName(name) ? name : (joinUserId ?? "").Trim();
                 bool pending = IsPendingRemove(name, joinUserId) || IsPendingRemove(label, joinUserId);
+                MarkLeftThisRoom(name, joinUserId);
+                if (!string.IsNullOrWhiteSpace(label) && label != name)
+                    MarkLeftThisRoom(label, joinUserId);
                 bool wasInRoom = RemoveRoomUser(name, joinUserId);
                 if (pending)
                     return;
@@ -1841,6 +1990,8 @@ public partial class MainWindow
             string name = SanitizeJoinerName(speaker);
             if (string.IsNullOrWhiteSpace(name) && TryParsePresentName(text, out string parsed))
                 name = parsed;
+            if (LeftThisRoom(name, joinUserId))
+                return;
             AddOrUpdateRoomUser(name, joinUserId);
             return;
         }
@@ -1856,6 +2007,7 @@ public partial class MainWindow
             }
             else if (!string.IsNullOrWhiteSpace(joiner) || !string.IsNullOrWhiteSpace(joinUserId))
             {
+                ForgetLeftThisRoom(joiner, joinUserId);
                 AddOrUpdateRoomUser(joiner, joinUserId);
                 LogRoomJoin(joiner, joinUserId);
             }
@@ -1911,8 +2063,7 @@ public partial class MainWindow
         else if (!room && _inActiveRoom)
         {
             _inActiveRoom = false;
-            _selfDetectedName = "";
-            _selfDetectedUid = "";
+            PersistOperatorIdentity();
             ClearRoomRoster();
             if (!_botRunning)
             {
