@@ -1,6 +1,6 @@
 {
     "version":  "0.9.98",
     "downloadUrl":  "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v0.9.98/IMVUCompanion-Setup-v0.9.98.exe",
-    "sha256":  "",
+    "sha256":  "747a8b1ff652369b0328b9bf8099b7b5a19d49a6460ff60ab339c857c9174a49",
     "releaseNotes":  "v0.9.98\n\nMessage Recorder\n- Reply opens a send modal inside Recorder. The person is looked up by uid, not name.\n- If they are in the room, Public or Whisper is chosen from [P] / [W]. Include Message in Reply sends: REPLYING TO: [first 20 characters...] -- your text.\n- If they are not in the room (or there is no room), the modal stays on Direct (DM) with send disabled.\n- Expanded user header shows userName - ID: #### in a muted color. Collapsed header is the name only.\n- Recorded message list background matches the other lists."
 }
