@@ -147,6 +147,85 @@
           </Setter.Value>
         </Setter>
       </Style>
+      <Style x:Key="Win11SendPublicButton" TargetType="{x:Type Button}" BasedOn="{StaticResource Win11Button}">
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type Button}">
+              <Border x:Name="Bd" Background="{TemplateBinding Control.Background}" BorderBrush="{TemplateBinding Control.BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Control.Padding}" SnapsToDevicePixels="True">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsMouseOver" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="#7DD3FC" />
+                  <Setter TargetName="Bd" Property="Border.BorderBrush" Value="#7DD3FC" />
+                  <Setter Property="Foreground" Value="#0F0F1C" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="#38BDF8" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                  <Setter Property="UIElement.Opacity" Value="0.45" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="Win11SendWhisperButton" TargetType="{x:Type Button}" BasedOn="{StaticResource Win11Button}">
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type Button}">
+              <Border x:Name="Bd" Background="{TemplateBinding Control.Background}" BorderBrush="{TemplateBinding Control.BorderBrush}" BorderThickness="1" CornerRadius="6" Padding="{TemplateBinding Control.Padding}" SnapsToDevicePixels="True">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsMouseOver" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="#D5A548" />
+                  <Setter TargetName="Bd" Property="Border.BorderBrush" Value="#D5A548" />
+                  <Setter Property="Foreground" Value="#0F0F1C" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="#B8862E" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                  <Setter Property="UIElement.Opacity" Value="0.45" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+      <Style x:Key="PageNavButton" TargetType="{x:Type Button}" BasedOn="{StaticResource Win11Button}">
+        <Setter Property="Width" Value="24" />
+        <Setter Property="Height" Value="24" />
+        <Setter Property="MinWidth" Value="24" />
+        <Setter Property="MinHeight" Value="24" />
+        <Setter Property="MaxWidth" Value="24" />
+        <Setter Property="MaxHeight" Value="24" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="FontSize" Value="10" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type Button}">
+              <Border x:Name="Bd" Width="24" Height="24" Background="{TemplateBinding Control.Background}" BorderBrush="{TemplateBinding Control.BorderBrush}" BorderThickness="1" CornerRadius="4" SnapsToDevicePixels="True">
+                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Border>
+              <ControlTemplate.Triggers>
+                <Trigger Property="UIElement.IsMouseOver" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="#2C2C48" />
+                  <Setter TargetName="Bd" Property="Border.BorderBrush" Value="#5050A0" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="Bd" Property="Border.Background" Value="#161628" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                  <Setter Property="UIElement.Opacity" Value="0.45" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
       <Style x:Key="Win11BotToggleButton" TargetType="{x:Type Button}" BasedOn="{StaticResource Win11Button}">
         <Setter Property="MinWidth" Value="0" />
         <Setter Property="MinHeight" Value="28" />
@@ -473,7 +552,7 @@
         </Setter>
       </Style>
       <Style x:Key="RecorderUserExpander" TargetType="{x:Type Expander}">
-        <Setter Property="Background" Value="#141428" />
+        <Setter Property="Background" Value="#0F0F1C" />
         <Setter Property="Foreground" Value="#E0E0FF" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="Margin" Value="0,0,0,4" />
@@ -661,7 +740,7 @@
         <Setter Property="MaxHeight" Value="22" />
         <Setter Property="Padding" Value="0" />
         <Setter Property="Margin" Value="0" />
-        <Setter Property="Background" Value="#1E1E32" />
+        <Setter Property="Background" Value="Transparent" />
         <Setter Property="BorderBrush" Value="#3A3A58" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="FrameworkElement.Cursor" Value="Hand" />
@@ -677,11 +756,11 @@
               </Border>
               <ControlTemplate.Triggers>
                 <Trigger Property="UIElement.IsMouseOver" Value="True">
-                  <Setter TargetName="Bd" Property="Border.Background" Value="#2C2C48" />
-                  <Setter TargetName="Bd" Property="Border.BorderBrush" Value="#5050A0" />
+                  <Setter TargetName="Bd" Property="Border.Background" Value="#2A2A48" />
+                  <Setter TargetName="Bd" Property="Border.BorderBrush" Value="#6A6AA0" />
                 </Trigger>
                 <Trigger Property="IsPressed" Value="True">
-                  <Setter TargetName="Bd" Property="Border.Background" Value="#161628" />
+                  <Setter TargetName="Bd" Property="Border.Background" Value="#242444" />
                 </Trigger>
               </ControlTemplate.Triggers>
             </ControlTemplate>
@@ -984,7 +1063,7 @@
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
                       <Button Content="Add" Style="{StaticResource Win11Button}" Margin="0,0,4,0" Click="Welcome1Add_Click" />
                       <Button Content="Update" Style="{StaticResource Win11Button}" Margin="0,0,4,0" Click="Welcome1Update_Click" />
-                      <Button Content="Delete" Style="{StaticResource Win11Button}" Click="Welcome1Delete_Click" />
+                      <Button Content="Delete" Style="{StaticResource Win11DangerButton}" Click="Welcome1Delete_Click" />
                     </StackPanel>
                   </Grid>
                   <Grid x:Name="Welcome2HeaderRow" Height="28">
@@ -1016,7 +1095,7 @@
                       <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
                         <Button Content="Add" Style="{StaticResource Win11Button}" Margin="0,0,4,0" Click="Welcome2Add_Click" />
                         <Button Content="Update" Style="{StaticResource Win11Button}" Margin="0,0,4,0" Click="Welcome2Update_Click" />
-                        <Button Content="Delete" Style="{StaticResource Win11Button}" Click="Welcome2Delete_Click" />
+                        <Button Content="Delete" Style="{StaticResource Win11DangerButton}" Click="Welcome2Delete_Click" />
                       </StackPanel>
                     </Grid>
                   </StackPanel>
@@ -1159,7 +1238,7 @@
                               <CheckBox x:Name="DeleteCategoryAlsoCheck" Style="{StaticResource CompanionCheckBox}" Content="Remove Category" HorizontalAlignment="Center" Visibility="Collapsed" IsChecked="False" Margin="0,0,0,16" />
                               <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                                 <Button Content="Cancel" Width="100" Height="36" Margin="0,0,12,0" Style="{StaticResource Win11Button}" Click="DeleteCommandCancel_Click" />
-                                <Button Content="Delete" Width="100" Height="36" Style="{StaticResource Win11Button}" Click="DeleteCommandConfirm_Click" />
+                                <Button Content="Delete" Width="100" Height="36" Style="{StaticResource Win11DangerButton}" Click="DeleteCommandConfirm_Click" />
                               </StackPanel>
                             </StackPanel>
                           </Border>
@@ -1183,11 +1262,11 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="CommandsTotalText" Grid.Column="0" Text="0 commands total" FontSize="12" Foreground="#8080A0" VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                          <Button x:Name="CommandsPagePrevBtn" Content="◀" Width="28" Height="24" Padding="0" FontSize="10" Click="CommandsPagePrev_Click" />
+                          <Button x:Name="CommandsPagePrevBtn" Content="◀" Style="{StaticResource PageNavButton}" Click="CommandsPagePrev_Click" />
                           <Border Background="#0F0F1C" BorderBrush="#3A3A58" BorderThickness="1" CornerRadius="4" Width="36" Height="24" Margin="4,0" VerticalAlignment="Center">
                             <TextBlock x:Name="CommandsPageText" Text="1" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="11" Foreground="#E0E0FF" />
                           </Border>
-                          <Button x:Name="CommandsPageNextBtn" Content="▶" Width="28" Height="24" Padding="0" FontSize="10" Click="CommandsPageNext_Click" />
+                          <Button x:Name="CommandsPageNextBtn" Content="▶" Style="{StaticResource PageNavButton}" Click="CommandsPageNext_Click" />
                         </StackPanel>
                       </Grid>
                     </StackPanel>
@@ -1444,7 +1523,7 @@
                             <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
                               <Button Content="Add" Style="{StaticResource Win11Button}" Margin="0,0,4,0" Click="RecorderReceiptAdd_Click" />
                               <Button Content="Update" Style="{StaticResource Win11Button}" Margin="0,0,4,0" Click="RecorderReceiptUpdate_Click" />
-                              <Button Content="Delete" Style="{StaticResource Win11Button}" Click="RecorderReceiptDelete_Click" />
+                              <Button Content="Delete" Style="{StaticResource Win11DangerButton}" Click="RecorderReceiptDelete_Click" />
                             </StackPanel>
                           </Grid>
                         </StackPanel>
@@ -1456,15 +1535,33 @@
               <Border x:Name="RecorderReplyModal" Visibility="Collapsed" Background="#E012121F" CornerRadius="6" Panel.ZIndex="20">
                 <Border Background="#252540" BorderBrush="#404060" BorderThickness="1" CornerRadius="14" Padding="16" Margin="8" VerticalAlignment="Center" HorizontalAlignment="Stretch">
                   <StackPanel>
-                    <TextBlock x:Name="RecorderReplyTitle" Text="Reply" FontSize="14" FontWeight="SemiBold" Foreground="#E8E8FF" Margin="0,0,0,10" />
+                    <Grid Margin="0,0,0,10">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock x:Name="RecorderReplyTitle" Text="Replying to" FontSize="14" FontWeight="SemiBold" Foreground="#E8E8FF" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                      <ComboBox x:Name="RecorderReplyModeCombo" Grid.Column="1" Height="26" MinWidth="132" Margin="10,0,0,0" VerticalAlignment="Center" SelectionChanged="RoomUserMessageMode_Changed">
+                        <ComboBoxItem Content="Public" Tag="public" />
+                        <ComboBoxItem Content="Whisper" Tag="whisper" />
+                        <ComboBoxItem Content="Direct (DM)" Tag="dm" Foreground="#6A6A88" />
+                      </ComboBox>
+                    </Grid>
                     <Grid Margin="0,0,0,4">
-                      <TextBox x:Name="RecorderReplyBox" Style="{StaticResource GrowingReplyTextBox}" Padding="3,0,26,0" Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58" PreviewMouseWheel="NestedControl_PreviewMouseWheel" TextChanged="RecorderReplyBox_TextChanged" />
+                      <TextBox x:Name="RecorderReplyBox" Style="{StaticResource GrowingReplyTextBox}" Padding="3,0,26,0" Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58" PreviewMouseWheel="NestedControl_PreviewMouseWheel" TextChanged="RoomUserMessageBox_TextChanged" />
+                      <TextBlock x:Name="RecorderReplyPlaceholder" Text="CURRENTLY IN DEVELOPMENT" Foreground="#606080" FontSize="12" Background="#0F0F1C" Padding="6,0" IsHitTestVisible="False" VerticalAlignment="Stretch" Visibility="Collapsed" />
                       <Button x:Name="RecorderReplyClearBtn" Style="{StaticResource IconSquareButton}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,3,3,0" Panel.ZIndex="1" Visibility="Collapsed" ToolTip="Clear" Click="MessageEditClear_Click">
                         <Path Data="M1,1 L9,9 M9,1 L1,9" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Width="10" Height="10" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                       </Button>
                     </Grid>
-                    <TextBlock x:Name="RecorderReplyCount" Text="0/1024" FontSize="10" Foreground="#8080A8" HorizontalAlignment="Right" Margin="0,0,0,10" />
-                    <Button Content="CURRENTLY IN DEVELOPMENT" Height="28" HorizontalAlignment="Stretch" Style="{StaticResource Win11Button}" Click="RecorderReplyDev_Click"/>
+                    <Grid Margin="0,0,0,10" MinHeight="22">
+                      <CheckBox x:Name="RecorderReplyPrefixCheck" Style="{StaticResource CompanionCheckBox}" Content="Include Message in Reply" HorizontalAlignment="Left" VerticalAlignment="Center" IsChecked="True" Checked="RoomUserMessagePrefix_Changed" Unchecked="RoomUserMessagePrefix_Changed" />
+                      <TextBlock x:Name="RecorderReplyCount" Text="0/1024" FontSize="10" Foreground="#8080A8" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Hidden" />
+                    </Grid>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                      <Button Content="Cancel" Width="118" Height="28" Margin="0,0,8,0" Style="{StaticResource Win11Button}" Click="RoomUserMessageCancel_Click" />
+                      <Button x:Name="RecorderReplySendBtn" Content="Send Public" Width="118" Height="28" Style="{StaticResource Win11SendPublicButton}" Click="RoomUserMessageSend_Click" />
+                    </StackPanel>
                   </StackPanel>
                 </Border>
               </Border>
@@ -1527,22 +1624,10 @@
                       <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
                         <Button Content="Add" Style="{StaticResource Win11Button}" Margin="0,0,4,0" Click="DmEditAdd_Click" />
                         <Button Content="Update" Style="{StaticResource Win11Button}" Margin="0,0,4,0" Click="DmEditUpdate_Click" />
-                        <Button Content="Delete" Style="{StaticResource Win11Button}" Click="DmEditDelete_Click" />
+                        <Button Content="Delete" Style="{StaticResource Win11DangerButton}" Click="DmEditDelete_Click" />
                       </StackPanel>
                     </Grid>
                     <Button Content="Done" Height="28" Margin="0,10,0,0" HorizontalAlignment="Right" Width="90" Style="{StaticResource Win11Button}" Click="DmEditDone_Click" />
-                  </StackPanel>
-                </Border>
-              </Border>
-              <Border x:Name="RoomUserRemoveModal" Visibility="Collapsed" Background="#E012121F" CornerRadius="6" Panel.ZIndex="30">
-                <Border Background="#252540" CornerRadius="12" Padding="20,18" BorderBrush="#404060" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center" MinWidth="260" MaxWidth="320">
-                  <StackPanel>
-                    <TextBlock Text="Removing User" FontSize="14" FontWeight="SemiBold" Foreground="#F87171" HorizontalAlignment="Center" TextAlignment="Center" />
-                    <TextBlock x:Name="RoomUserRemoveName" FontSize="14" Foreground="#E0E0FF" HorizontalAlignment="Center" TextAlignment="Center" Margin="0,0,0,16" />
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                      <Button Content="REMOVE" Width="100" Height="32" Margin="0,0,12,0" Style="{StaticResource Win11DangerButton}" Click="RoomUserRemoveConfirm_Click" />
-                      <Button Content="CANCEL" Width="100" Height="32" Style="{StaticResource Win11Button}" Click="RoomUserRemoveCancel_Click" />
-                    </StackPanel>
                   </StackPanel>
                 </Border>
               </Border>
@@ -1563,18 +1648,30 @@
                     </Grid>
                     <Grid x:Name="RoomUserMessageComposePanel" Margin="0,0,0,4">
                       <TextBox x:Name="RoomUserMessageBox" Style="{StaticResource GrowingReplyTextBox}" Padding="3,0,26,0" Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58" PreviewMouseWheel="NestedControl_PreviewMouseWheel" TextChanged="RoomUserMessageBox_TextChanged" />
+                      <TextBlock x:Name="RoomUserMessagePlaceholder" Text="CURRENTLY IN DEVELOPMENT" Foreground="#606080" FontSize="12" Background="#0F0F1C" Padding="6,0" IsHitTestVisible="False" VerticalAlignment="Stretch" Visibility="Collapsed" />
                       <Button x:Name="RoomUserMessageClearBtn" Style="{StaticResource IconSquareButton}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,3,3,0" Panel.ZIndex="1" Visibility="Collapsed" ToolTip="Clear" Click="MessageEditClear_Click">
                         <Path Data="M1,1 L9,9 M9,1 L1,9" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Width="10" Height="10" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                       </Button>
                     </Grid>
-                    
                     <Grid x:Name="RoomUserMessagePrefixRow" Margin="0,0,0,10" MinHeight="22">
                       <CheckBox x:Name="RoomUserMessagePrefixCheck" Style="{StaticResource CompanionCheckBox}" Content="Prefix userName" HorizontalAlignment="Left" VerticalAlignment="Center" IsChecked="True" Checked="RoomUserMessagePrefix_Changed" Unchecked="RoomUserMessagePrefix_Changed" />
                       <TextBlock x:Name="RoomUserMessageCount" Text="0/1024" FontSize="10" Foreground="#8080A8" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Hidden" />
                     </Grid>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                       <Button x:Name="RoomUserMessageCancelBtn" Content="Cancel" Width="118" Height="28" Margin="0,0,8,0" Style="{StaticResource Win11Button}" Click="RoomUserMessageCancel_Click" />
-                      <Button x:Name="RoomUserMessageSendBtn" Content="Send Public" Width="118" Height="28" Style="{StaticResource Win11Button}" Click="RoomUserMessageSend_Click" />
+                      <Button x:Name="RoomUserMessageSendBtn" Content="Send Public" Width="118" Height="28" Style="{StaticResource Win11SendPublicButton}" Click="RoomUserMessageSend_Click" />
+                    </StackPanel>
+                  </StackPanel>
+                </Border>
+              </Border>
+              <Border x:Name="RoomUserRemoveModal" Visibility="Collapsed" Background="#E012121F" CornerRadius="6" Panel.ZIndex="30">
+                <Border Background="#252540" CornerRadius="12" Padding="20,18" BorderBrush="#404060" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center" MinWidth="260" MaxWidth="320">
+                  <StackPanel>
+                    <TextBlock Text="Removing User" FontSize="14" FontWeight="SemiBold" Foreground="#F87171" HorizontalAlignment="Center" TextAlignment="Center" />
+                    <TextBlock x:Name="RoomUserRemoveName" FontSize="14" Foreground="#E0E0FF" HorizontalAlignment="Center" TextAlignment="Center" Margin="0,0,0,16" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                      <Button Content="REMOVE" Width="100" Height="32" Margin="0,0,12,0" Style="{StaticResource Win11DangerButton}" Click="RoomUserRemoveConfirm_Click" />
+                      <Button Content="CANCEL" Width="100" Height="32" Style="{StaticResource Win11Button}" Click="RoomUserRemoveCancel_Click" />
                     </StackPanel>
                   </StackPanel>
                 </Border>

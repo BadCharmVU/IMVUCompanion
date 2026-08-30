@@ -371,8 +371,18 @@ const post = (s) => { try { window.chrome.webview.postMessage(s); } catch(e) {} 
             if (p) emitPresent(p);
         }
     }
+    window.__imvuResetRosterDedupe = function() {
+        window._seenPresentUids = new Set();
+        window._seenJoinUids = new Set();
+        window._seenLeaveUids = new Set();
+        window._seenLeaveNames = new Set();
+        window._seenPresentRows = new WeakSet();
+        window._seenJoinRows = new WeakSet();
+        window._seenLeaveRows = new WeakSet();
+    };
     window.__imvuReseedPresence = function() {
         try { captureMyUserUid(); } catch (e) {}
+        try { window.__imvuResetRosterDedupe(); } catch (e) {}
         try { seedExistingPresence(); } catch (e) {}
     };
     function scanRecentJoins() {

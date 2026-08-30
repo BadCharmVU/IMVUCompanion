@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -62,6 +63,8 @@ public partial class MainWindow
     private static readonly SolidColorBrush RecorderRowSelectedBg = CreateFrozenBrush(0x24, 0x24, 0x44);
     private static readonly SolidColorBrush RecorderSepBrush = CreateFrozenBrush(0x2A, 0x2A, 0x40);
     private static readonly SolidColorBrush RecorderTextFg = CreateFrozenBrush(0xC0, 0xC0, 0xE0);
+    private static readonly SolidColorBrush RecorderHeaderNameFg = CreateFrozenBrush(0xE0, 0xE0, 0xFF);
+    private static readonly SolidColorBrush RecorderHeaderIdFg = CreateFrozenBrush(0x70, 0x70, 0x90);
 
     private bool _inActiveRoom;
     private bool _recorderEnabled;
@@ -87,14 +90,16 @@ public partial class MainWindow
     private readonly Dictionary<string, List<string>> _receiptByLang =
         new(StringComparer.OrdinalIgnoreCase);
     private int _rosterSeedGen;
-    private string? _recorderReplyUser;
-    private string? _recorderReplyMessageId;
     private string _selfDetectedName = "";
     private string _selfDetectedUid = "";
     private string? _recorderSelectedMessageId;
     private readonly List<RecorderRowChrome> _recorderRows = new();
     private RoomUserVm? _chipMessageUser;
     private RoomUserVm? _pendingRemoveUser;
+    private bool _roomUserMessageIsReply;
+    private bool _composeOnRecorder;
+    private bool _composeLockedDev;
+    private string? _replySourceText;
     private readonly List<PendingRemove> _pendingRemoves = new();
 
     private sealed class PendingRemove
@@ -563,23 +568,35 @@ public partial class MainWindow
         var open = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var child in RecorderUsersPanel.Children)
         {
-            if (child is Expander { IsExpanded: true, Header: string hdr })
-                open.Add(hdr);
+            if (child is Expander { IsExpanded: true, Tag: string key })
+                open.Add(key);
         }
 
         _recorderRows.Clear();
         RecorderUsersPanel.Children.Clear();
         foreach (var user in _recorderUsers)
         {
+            string key = !string.IsNullOrWhiteSpace(user.UserId) ? user.UserId : user.Name;
+            bool expanded = open.Contains(key);
+            var header = new TextBlock
+            {
+                FontSize = 14,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            ApplyRecorderUserHeader(header, user, expanded);
             var expander = new Expander
             {
                 Style = TryFindResource("RecorderUserExpander") as Style,
-                Header = user.Name,
-                IsExpanded = open.Contains(user.Name),
+                Header = header,
+                Tag = key,
+                IsExpanded = expanded,
                 Foreground = new SolidColorBrush(Color.FromRgb(0xE0, 0xE0, 0xFF)),
-                Background = new SolidColorBrush(Color.FromRgb(0x14, 0x14, 0x28)),
+                Background = new SolidColorBrush(Color.FromRgb(0x0F, 0x0F, 0x1C)),
                 Margin = new Thickness(0, 0, 0, 4)
             };
+            expander.Expanded += (_, _) => ApplyRecorderUserHeader(header, user, true);
+            expander.Collapsed += (_, _) => ApplyRecorderUserHeader(header, user, false);
             var list = new StackPanel();
             foreach (var line in user.Messages)
             {
@@ -770,18 +787,37 @@ public partial class MainWindow
         }
     }
 
+    private static void ApplyRecorderUserHeader(TextBlock header, RecorderUserVm user, bool expanded)
+    {
+        string name = string.IsNullOrWhiteSpace(user.Name) ? "?" : user.Name;
+        header.Inlines.Clear();
+        header.Inlines.Add(new Run(name) { Foreground = RecorderHeaderNameFg });
+        if (!expanded) return;
+        string uid = (user.UserId ?? "").Trim();
+        if (string.IsNullOrEmpty(uid)) return;
+        header.Inlines.Add(new Run(" - ID: " + uid) { Foreground = RecorderHeaderIdFg });
+    }
+
+    private RoomUserVm? FindRoomUserByUid(string? uid)
+    {
+        uid = (uid ?? "").Trim();
+        if (string.IsNullOrEmpty(uid)) return null;
+        return _roomUsers.FirstOrDefault(u =>
+            string.Equals((u.UserId ?? "").Trim(), uid, StringComparison.Ordinal));
+    }
+
     private void RecorderReply_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: (RecorderUserVm user, RecorderMessageVm msg) }) return;
-        _recorderReplyUser = user.Name;
-        _recorderReplyMessageId = msg.Id;
-        if (RecorderReplyTitle != null)
-            RecorderReplyTitle.Text = "Reply to " + user.Name;
-        if (RecorderReplyBox != null)
-            RecorderReplyBox.Text = "";
-        UpdateRecorderReplyCount();
-        if (RecorderReplyModal != null)
-            RecorderReplyModal.Visibility = Visibility.Visible;
+        if (sender is not Button { Tag: (RecorderUserVm recUser, RecorderMessageVm msg) }) return;
+        var roomUser = FindRoomUserByUid(recUser.UserId);
+        bool locked = !_inActiveRoom || roomUser == null;
+        var target = roomUser ?? new RoomUserVm
+        {
+            Name = recUser.Name,
+            UserId = recUser.UserId ?? "",
+            Key = RoomUserKey(recUser.Name, recUser.UserId)
+        };
+        OpenRoomUserMessageModal(target, replyTo: msg, onRecorder: true, lockedDev: locked);
     }
 
     private void RecorderReplyBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -1670,26 +1706,64 @@ public partial class MainWindow
             _ = RemoveRoomUserFromRoomAsync(user);
     }
 
-    private void OpenRoomUserMessageModal(RoomUserVm user)
+    private void OpenRoomUserMessageModal(
+        RoomUserVm user, RecorderMessageVm? replyTo = null, bool onRecorder = false, bool lockedDev = false)
     {
         _chipMessageUser = user;
+        _composeOnRecorder = onRecorder;
+        _composeLockedDev = lockedDev;
+        _roomUserMessageIsReply = replyTo != null;
+        _replySourceText = replyTo?.Text;
         string label = RoomUserLabel(user);
-        if (RoomUserMessageTitle != null)
-            RoomUserMessageTitle.Text = "Message to " + label;
-        if (RoomUserMessageBox != null)
-            RoomUserMessageBox.Text = "";
+        var title = onRecorder ? RecorderReplyTitle : RoomUserMessageTitle;
+        var box = onRecorder ? RecorderReplyBox : RoomUserMessageBox;
+        var prefix = onRecorder ? RecorderReplyPrefixCheck : RoomUserMessagePrefixCheck;
+        var modal = onRecorder ? RecorderReplyModal : RoomUserMessageModal;
+        if (title != null)
+            title.Text = (_roomUserMessageIsReply ? "Replying to " : "Message to ") + label;
+        if (box != null)
+            box.Text = "";
         _dmUiSyncing = true;
         try
         {
-            if (RoomUserMessagePrefixCheck != null)
-                RoomUserMessagePrefixCheck.IsChecked = _chipMessagePrefix;
-            SelectRoomUserMessageMode(_chipMessageMode);
+            if (prefix != null)
+            {
+                prefix.Content = _roomUserMessageIsReply ? "Include Message in Reply" : "Prefix userName";
+                prefix.IsChecked = _roomUserMessageIsReply || _chipMessagePrefix;
+            }
+            string mode = lockedDev
+                ? "dm"
+                : _roomUserMessageIsReply
+                    ? (replyTo!.IsWhisper ? "whisper" : "public")
+                    : _chipMessageMode;
+            SelectRoomUserMessageMode(mode);
         }
         finally { _dmUiSyncing = false; }
+        ApplyComposeLock();
         UpdateRoomUserMessageModeUi();
         UpdateRoomUserMessageCount();
-        if (RoomUserMessageModal != null)
-            RoomUserMessageModal.Visibility = Visibility.Visible;
+        if (modal != null)
+            modal.Visibility = Visibility.Visible;
+    }
+
+    private void ApplyComposeLock()
+    {
+        var combo = _composeOnRecorder ? RecorderReplyModeCombo : RoomUserMessageModeCombo;
+        if (combo != null) combo.IsEnabled = !_composeLockedDev;
+        ApplyComposeInputState();
+    }
+
+    private void ApplyComposeInputState()
+    {
+        bool lockInput = _composeLockedDev || SelectedRoomUserMessageMode() == "dm";
+        var box = _composeOnRecorder ? RecorderReplyBox : RoomUserMessageBox;
+        var placeholder = _composeOnRecorder ? RecorderReplyPlaceholder : RoomUserMessagePlaceholder;
+        var clear = _composeOnRecorder ? RecorderReplyClearBtn : RoomUserMessageClearBtn;
+        if (box != null) box.IsEnabled = !lockInput;
+        if (placeholder != null)
+            placeholder.Visibility = lockInput ? Visibility.Visible : Visibility.Collapsed;
+        if (lockInput && clear != null)
+            clear.Visibility = Visibility.Collapsed;
     }
 
     private void RoomUserMessageCancel_Click(object sender, RoutedEventArgs e) =>
@@ -1699,14 +1773,33 @@ public partial class MainWindow
     {
         if (RoomUserMessageModal != null)
             RoomUserMessageModal.Visibility = Visibility.Collapsed;
+        if (RecorderReplyModal != null)
+            RecorderReplyModal.Visibility = Visibility.Collapsed;
         if (RoomUserMessageBox != null)
             RoomUserMessageBox.Text = "";
+        if (RecorderReplyBox != null)
+            RecorderReplyBox.Text = "";
         _chipMessageUser = null;
+        _roomUserMessageIsReply = false;
+        _composeOnRecorder = false;
+        _composeLockedDev = false;
+        _replySourceText = null;
+        if (RoomUserMessagePrefixCheck != null)
+            RoomUserMessagePrefixCheck.Content = "Prefix userName";
+        if (RoomUserMessageModeCombo != null) RoomUserMessageModeCombo.IsEnabled = true;
+        if (RecorderReplyModeCombo != null) RecorderReplyModeCombo.IsEnabled = true;
+        if (RoomUserMessageBox != null) RoomUserMessageBox.IsEnabled = true;
+        if (RecorderReplyBox != null) RecorderReplyBox.IsEnabled = true;
+        if (RecorderReplyPlaceholder != null)
+            RecorderReplyPlaceholder.Visibility = Visibility.Collapsed;
+        if (RoomUserMessagePlaceholder != null)
+            RoomUserMessagePlaceholder.Visibility = Visibility.Collapsed;
     }
 
     private void RoomUserMessagePrefix_Changed(object sender, RoutedEventArgs e)
     {
         if (_dmUiSyncing || !_dmReady) return;
+        if (_roomUserMessageIsReply) return;
         _chipMessagePrefix = RoomUserMessagePrefixCheck?.IsChecked == true;
         SaveDmMessages();
     }
@@ -1719,40 +1812,44 @@ public partial class MainWindow
 
     private void UpdateRoomUserMessageCount()
     {
-        if (RoomUserMessageCount == null) return;
-        int n = RoomUserMessageBox?.Text?.Length ?? 0;
+        var count = _composeOnRecorder ? RecorderReplyCount : RoomUserMessageCount;
+        var box = _composeOnRecorder ? RecorderReplyBox : RoomUserMessageBox;
+        if (count == null) return;
+        int n = box?.Text?.Length ?? 0;
         if (n > 1024)
             n = 1024;
-        RoomUserMessageCount.Text = n.ToString() + "/1024";
+        count.Text = n.ToString() + "/1024";
     }
 
     private string SelectedRoomUserMessageMode()
     {
-        if (RoomUserMessageModeCombo?.SelectedItem is ComboBoxItem item && item.Tag is string tag)
+        var combo = _composeOnRecorder ? RecorderReplyModeCombo : RoomUserMessageModeCombo;
+        if (combo?.SelectedItem is ComboBoxItem item && item.Tag is string tag)
             return tag;
         return "public";
     }
 
     private void SelectRoomUserMessageMode(string mode)
     {
-        if (RoomUserMessageModeCombo == null) return;
+        var combo = _composeOnRecorder ? RecorderReplyModeCombo : RoomUserMessageModeCombo;
+        if (combo == null) return;
         if (string.IsNullOrEmpty(mode)) mode = "public";
-        foreach (ComboBoxItem item in RoomUserMessageModeCombo.Items)
+        foreach (ComboBoxItem item in combo.Items)
         {
             if (item.Tag is string t && t == mode)
             {
-                RoomUserMessageModeCombo.SelectedItem = item;
+                combo.SelectedItem = item;
                 return;
             }
         }
-        if (RoomUserMessageModeCombo.Items.Count > 0)
-            RoomUserMessageModeCombo.SelectedIndex = 0;
+        if (combo.Items.Count > 0)
+            combo.SelectedIndex = 0;
     }
 
     private void RoomUserMessageMode_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (!_dmReady && RoomUserMessageModal == null) return;
-        if (!_dmUiSyncing)
+        if (!_dmUiSyncing && !_roomUserMessageIsReply && !_composeLockedDev)
             _chipMessageMode = SelectedRoomUserMessageMode();
         UpdateRoomUserMessageModeUi();
     }
@@ -1760,26 +1857,38 @@ public partial class MainWindow
     private void UpdateRoomUserMessageModeUi()
     {
         string mode = SelectedRoomUserMessageMode();
-        if (RoomUserMessageCount != null)
-            RoomUserMessageCount.Visibility = mode == "dm" ? Visibility.Visible : Visibility.Hidden;
-        if (RoomUserMessageSendBtn == null) return;
-        RoomUserMessageSendBtn.Content = mode switch
+        var count = _composeOnRecorder ? RecorderReplyCount : RoomUserMessageCount;
+        var send = _composeOnRecorder ? RecorderReplySendBtn : RoomUserMessageSendBtn;
+        if (count != null)
+            count.Visibility = mode == "dm" ? Visibility.Visible : Visibility.Hidden;
+        if (send == null) return;
+        send.Content = mode switch
         {
             "whisper" => "Send Whisper",
             "dm" => "Send DM",
             _ => "Send Public"
         };
-        RoomUserMessageSendBtn.IsEnabled = mode != "dm";
-        RoomUserMessageSendBtn.Opacity = mode == "dm" ? 0.45 : 1;
+        send.IsEnabled = mode != "dm" && !_composeLockedDev;
+        send.Opacity = (mode == "dm" || _composeLockedDev) ? 0.45 : 1;
+        var pub = TryFindResource("Win11SendPublicButton") as Style;
+        var wh = TryFindResource("Win11SendWhisperButton") as Style;
+        var normal = TryFindResource("Win11Button") as Style;
+        send.Style = mode switch
+        {
+            "whisper" => wh ?? normal,
+            "dm" => normal,
+            _ => pub ?? normal
+        };
+        ApplyComposeInputState();
     }
 
     private async void RoomUserMessageSend_Click(object sender, RoutedEventArgs e)
     {
-        if (_chipMessageUser == null) return;
+        if (_chipMessageUser == null || _composeLockedDev) return;
         string mode = SelectedRoomUserMessageMode();
         if (mode == "dm") return;
 
-        string body = RoomUserMessageBox?.Text ?? "";
+        string body = (_composeOnRecorder ? RecorderReplyBox?.Text : RoomUserMessageBox?.Text) ?? "";
         if (string.IsNullOrWhiteSpace(body))
         {
             AppendLog("Enter a message first.", LogCategory.Warning);
@@ -1792,7 +1901,13 @@ public partial class MainWindow
         }
 
         var user = _chipMessageUser;
-        string sent = _chipMessagePrefix ? PrefixPublicDm(user.Name, body) : body;
+        string sent;
+        if (_roomUserMessageIsReply)
+            sent = (_composeOnRecorder ? RecorderReplyPrefixCheck : RoomUserMessagePrefixCheck)?.IsChecked == true
+                ? FormatRecorderReplySend(_replySourceText, body)
+                : body;
+        else
+            sent = _chipMessagePrefix ? PrefixPublicDm(user.Name, body) : body;
         string? result;
         if (mode == "whisper")
         {
@@ -1815,9 +1930,18 @@ public partial class MainWindow
 
         if (result == "ok")
         {
-            _chipMessageMode = mode;
+            if (!_roomUserMessageIsReply)
+                _chipMessageMode = mode;
             CloseRoomUserMessageModal();
         }
+    }
+
+    private static string FormatRecorderReplySend(string? source, string body)
+    {
+        string clip = (source ?? "").Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ');
+        if (clip.Length > 20)
+            clip = clip[..20] + "...";
+        return "REPLYING TO: [" + clip + "] -- " + body;
     }
 
     private async Task RemoveRoomUserFromRoomAsync(RoomUserVm user)
@@ -2056,6 +2180,7 @@ public partial class MainWindow
         if (room && !_inActiveRoom)
         {
             _inActiveRoom = true;
+            _leftThisRoom.Clear();
             await EnsureRoomObserverAsync();
             await RefreshSelfIdentityAsync();
             _ = ReseedRosterAfterEnterAsync();
