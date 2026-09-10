@@ -54,6 +54,7 @@ public partial class MainWindow
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly SolidColorBrush HeaderActiveGreen = CreateFrozenBrush(0x4A, 0xDE, 0x80);
     private static readonly SolidColorBrush HeaderInactiveRed = CreateFrozenBrush(0xFF, 0x55, 0x55);
+    private static readonly SolidColorBrush OverlayErrorFg = CreateFrozenBrush(0xF8, 0x71, 0x71);
     private static readonly SolidColorBrush RoomUserIdleBg = CreateFrozenBrush(0x25, 0x25, 0x40);
     private static readonly SolidColorBrush RoomUserSelectedBg = CreateFrozenBrush(0x3A, 0x4A, 0x7A);
     private static readonly SolidColorBrush RecorderChipPublicBg = CreateFrozenBrush(0x7D, 0xD3, 0xFC);
@@ -127,6 +128,7 @@ public partial class MainWindow
         LoadRecorderSettings();
         PruneSelfFromRecorder();
         LoadDmMessages();
+        LoadActivePresetPack();
         if (RecorderTriggerBox != null)
             RecorderTriggerBox.Text = _recorderTrigger;
         _recorderReady = false;
@@ -344,6 +346,7 @@ public partial class MainWindow
                 }).ToList(),
                 AnsweringByLang = answering
             });
+            SaveActivePresetPack();
         }
         catch (Exception ex)
         {
@@ -925,8 +928,10 @@ public partial class MainWindow
                 CanMoveDown = i < last
             });
         }
+        SizeGrowingList(RecorderReceiptList, rows.Count);
         RecorderReceiptList.ItemsSource = null;
         RecorderReceiptList.ItemsSource = rows;
+        ResetGrowingListScroll(RecorderReceiptList, rows.Count);
     }
 
     private void RecorderReceiptMoveUp_Preview(object sender, MouseButtonEventArgs e)
@@ -1088,6 +1093,7 @@ public partial class MainWindow
                 PrefixUserName = _chipMessagePrefix,
                 Messages = _consoleByLang
             });
+            SaveActivePresetPack();
         }
         catch (Exception ex)
         {

@@ -83,6 +83,25 @@ internal static class AppDatabase
         public Dictionary<string, List<string>> AnsweringByLang { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
+    public sealed class PresetInfo
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public int SortOrder { get; set; }
+    }
+
+    public sealed class PresetPack
+    {
+        public bool Welcome1Enabled { get; set; } = true;
+        public bool Welcome1Whisper { get; set; }
+        public bool Welcome2Enabled { get; set; }
+        public bool Welcome2Whisper { get; set; } = true;
+        public bool ConsoleWhisper { get; set; }
+        public bool ConsolePrefix { get; set; } = true;
+        public string RecorderTrigger { get; set; } = "RMsg";
+        public bool ConfirmReceipt { get; set; } = true;
+    }
+
     public sealed class UiLayoutData
     {
         public double Width { get; set; }
@@ -144,6 +163,7 @@ internal static class AppDatabase
             }
             CreateSchema();
             EnsureColumn("recorder_settings", "enabled", "enabled INTEGER NOT NULL DEFAULT 0");
+            EnsurePresets();
             if (!IsFlag("initialized"))
             {
                 SetFlag("initialized", true);
@@ -833,7 +853,21 @@ internal static class AppDatabase
                 model TEXT NOT NULL DEFAULT '',
                 temperature REAL NOT NULL DEFAULT 0.7,
                 max_tokens INTEGER NOT NULL DEFAULT 1024,
-                enabled INTEGER NOT NULL DEFAULT 0)"
+                enabled INTEGER NOT NULL DEFAULT 0)",
+            @"CREATE TABLE IF NOT EXISTS presets (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                sort_order INTEGER NOT NULL)",
+            @"CREATE TABLE IF NOT EXISTS preset_pack (
+                preset_id TEXT PRIMARY KEY,
+                welcome1_enabled INTEGER NOT NULL DEFAULT 1,
+                welcome1_whisper INTEGER NOT NULL DEFAULT 0,
+                welcome2_enabled INTEGER NOT NULL DEFAULT 0,
+                welcome2_whisper INTEGER NOT NULL DEFAULT 1,
+                console_whisper INTEGER NOT NULL DEFAULT 0,
+                console_prefix INTEGER NOT NULL DEFAULT 1,
+                recorder_trigger TEXT NOT NULL DEFAULT 'RMsg',
+                confirm_receipt INTEGER NOT NULL DEFAULT 1)"
         })
             Exec(sql);
     }
@@ -1418,6 +1452,226 @@ internal static class AppDatabase
         if (!el.TryGetProperty(name, out var p)) return 0;
         if (p.ValueKind == JsonValueKind.Number && p.TryGetDouble(out double d)) return d;
         return 0;
+    }
+
+    private static void EnsurePresets()
+    {
+        int n = 0;
+        using (var cmd = Cmd("SELECT COUNT(*) FROM presets"))
+            n = Convert.ToInt32(cmd.ExecuteScalar());
+        if (n == 0)
+        {
+            Exec("INSERT INTO presets (id, name, sort_order) VALUES ('en', 'English', 0)");
+            Exec("INSERT INTO presets (id, name, sort_order) VALUES ('ru', 'Русский', 1)");
+        }
+        bool w1 = true, w1w = false, w2 = false, w2w = true;
+        using (var cmd = Cmd("SELECT msg1_enabled, msg1_as_whisper, msg2_enabled, msg2_as_whisper FROM welcome_settings WHERE id = 1"))
+        using (var r = cmd.ExecuteReader())
+        {
+            if (r.Read())
+            {
+                w1 = r.GetInt32(0) != 0;
+                w1w = r.GetInt32(1) != 0;
+                w2 = r.GetInt32(2) != 0;
+                w2w = r.GetInt32(3) != 0;
+            }
+        }
+        bool cw = false, cp = true;
+        using (var cmd = Cmd("SELECT as_whisper, prefix_user_name FROM console_settings WHERE id = 1"))
+        using (var r = cmd.ExecuteReader())
+        {
+            if (r.Read())
+            {
+                cw = r.GetInt32(0) != 0;
+                cp = r.GetInt32(1) != 0;
+            }
+        }
+        string trig = "RMsg";
+        bool confirm = true;
+        using (var cmd = Cmd("SELECT trigger, confirm_receipt FROM recorder_settings WHERE id = 1"))
+        using (var r = cmd.ExecuteReader())
+        {
+            if (r.Read())
+            {
+                if (!r.IsDBNull(0) && !string.IsNullOrWhiteSpace(r.GetString(0)))
+                    trig = r.GetString(0);
+                confirm = r.GetInt32(1) != 0;
+            }
+        }
+        foreach (var id in new[] { "en", "ru" })
+        {
+            using var cmd = Cmd(@"INSERT OR IGNORE INTO preset_pack
+                (preset_id, welcome1_enabled, welcome1_whisper, welcome2_enabled, welcome2_whisper,
+                 console_whisper, console_prefix, recorder_trigger, confirm_receipt)
+                VALUES (@id, @a, @b, @c, @d, @e, @f, @t, @g)");
+            cmd.Parameters.AddWithValue("@id", id);
+            cmd.Parameters.AddWithValue("@a", w1 ? 1 : 0);
+            cmd.Parameters.AddWithValue("@b", w1w ? 1 : 0);
+            cmd.Parameters.AddWithValue("@c", w2 ? 1 : 0);
+            cmd.Parameters.AddWithValue("@d", w2w ? 1 : 0);
+            cmd.Parameters.AddWithValue("@e", cw ? 1 : 0);
+            cmd.Parameters.AddWithValue("@f", cp ? 1 : 0);
+            cmd.Parameters.AddWithValue("@t", trig);
+            cmd.Parameters.AddWithValue("@g", confirm ? 1 : 0);
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    public static List<PresetInfo> LoadPresets()
+    {
+        lock (Gate)
+        {
+            var list = new List<PresetInfo>();
+            using var cmd = Cmd("SELECT id, name, sort_order FROM presets ORDER BY sort_order, name");
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                list.Add(new PresetInfo
+                {
+                    Id = r.GetString(0),
+                    Name = r.GetString(1),
+                    SortOrder = r.GetInt32(2)
+                });
+            }
+            return list;
+        }
+    }
+
+    public static void SavePresets(IEnumerable<PresetInfo> presets)
+    {
+        lock (Gate)
+        {
+            using var tx = Conn.BeginTransaction();
+            ExecTx(tx, "DELETE FROM presets");
+            int i = 0;
+            foreach (var p in presets)
+            {
+                if (p == null || string.IsNullOrWhiteSpace(p.Id) || string.IsNullOrWhiteSpace(p.Name))
+                    continue;
+                ExecTx(tx, "INSERT INTO presets (id, name, sort_order) VALUES (@i, @n, @o)",
+                    ("@i", p.Id.Trim()), ("@n", p.Name.Trim()), ("@o", i++));
+            }
+            tx.Commit();
+        }
+    }
+
+    public static PresetPack LoadPresetPack(string id)
+    {
+        lock (Gate)
+        {
+            var pack = new PresetPack();
+            if (string.IsNullOrWhiteSpace(id)) return pack;
+            using var cmd = Cmd(@"SELECT welcome1_enabled, welcome1_whisper, welcome2_enabled, welcome2_whisper,
+                console_whisper, console_prefix, recorder_trigger, confirm_receipt
+                FROM preset_pack WHERE preset_id = @id");
+            cmd.Parameters.AddWithValue("@id", id);
+            using var r = cmd.ExecuteReader();
+            if (!r.Read()) return pack;
+            pack.Welcome1Enabled = r.GetInt32(0) != 0;
+            pack.Welcome1Whisper = r.GetInt32(1) != 0;
+            pack.Welcome2Enabled = r.GetInt32(2) != 0;
+            pack.Welcome2Whisper = r.GetInt32(3) != 0;
+            pack.ConsoleWhisper = r.GetInt32(4) != 0;
+            pack.ConsolePrefix = r.GetInt32(5) != 0;
+            pack.RecorderTrigger = r.IsDBNull(6) || string.IsNullOrWhiteSpace(r.GetString(6)) ? "RMsg" : r.GetString(6);
+            pack.ConfirmReceipt = r.GetInt32(7) != 0;
+            return pack;
+        }
+    }
+
+    public static void SavePresetPack(string id, PresetPack pack)
+    {
+        if (string.IsNullOrWhiteSpace(id) || pack == null) return;
+        lock (Gate)
+        {
+            Exec(@"INSERT INTO preset_pack
+                (preset_id, welcome1_enabled, welcome1_whisper, welcome2_enabled, welcome2_whisper,
+                 console_whisper, console_prefix, recorder_trigger, confirm_receipt)
+                VALUES (@id, @a, @b, @c, @d, @e, @f, @t, @g)
+                ON CONFLICT(preset_id) DO UPDATE SET
+                welcome1_enabled=@a, welcome1_whisper=@b, welcome2_enabled=@c, welcome2_whisper=@d,
+                console_whisper=@e, console_prefix=@f, recorder_trigger=@t, confirm_receipt=@g",
+                ("@id", id.Trim()),
+                ("@a", pack.Welcome1Enabled ? 1 : 0),
+                ("@b", pack.Welcome1Whisper ? 1 : 0),
+                ("@c", pack.Welcome2Enabled ? 1 : 0),
+                ("@d", pack.Welcome2Whisper ? 1 : 0),
+                ("@e", pack.ConsoleWhisper ? 1 : 0),
+                ("@f", pack.ConsolePrefix ? 1 : 0),
+                ("@t", string.IsNullOrWhiteSpace(pack.RecorderTrigger) ? "RMsg" : pack.RecorderTrigger),
+                ("@g", pack.ConfirmReceipt ? 1 : 0));
+        }
+    }
+
+    public static void DeletePresetKeyedData(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return;
+        lock (Gate)
+        {
+            using var tx = Conn.BeginTransaction();
+            ExecTx(tx, "DELETE FROM trigger_entries WHERE category_id IN (SELECT id FROM trigger_categories WHERE lang=@id)", ("@id", id));
+            ExecTx(tx, "DELETE FROM trigger_categories WHERE lang=@id", ("@id", id));
+            ExecTx(tx, "DELETE FROM trigger_active_category WHERE lang=@id", ("@id", id));
+            ExecTx(tx, "DELETE FROM welcome_messages WHERE lang=@id", ("@id", id));
+            ExecTx(tx, "DELETE FROM console_messages WHERE lang=@id", ("@id", id));
+            ExecTx(tx, "DELETE FROM answering_messages WHERE lang=@id", ("@id", id));
+            ExecTx(tx, "DELETE FROM preset_pack WHERE preset_id=@id", ("@id", id));
+            ExecTx(tx, "DELETE FROM presets WHERE id=@id", ("@id", id));
+            tx.Commit();
+        }
+    }
+
+    public static void CopyPresetKeyedData(string fromId, string toId)
+    {
+        if (string.IsNullOrWhiteSpace(fromId) || string.IsNullOrWhiteSpace(toId) ||
+            string.Equals(fromId, toId, StringComparison.OrdinalIgnoreCase))
+            return;
+        lock (Gate)
+        {
+            using var tx = Conn.BeginTransaction();
+            ExecTx(tx, "DELETE FROM trigger_entries WHERE category_id IN (SELECT id FROM trigger_categories WHERE lang=@id)", ("@id", toId));
+            ExecTx(tx, "DELETE FROM trigger_categories WHERE lang=@id", ("@id", toId));
+            ExecTx(tx, "DELETE FROM trigger_active_category WHERE lang=@id", ("@id", toId));
+            ExecTx(tx, "DELETE FROM welcome_messages WHERE lang=@id", ("@id", toId));
+            ExecTx(tx, "DELETE FROM console_messages WHERE lang=@id", ("@id", toId));
+            ExecTx(tx, "DELETE FROM answering_messages WHERE lang=@id", ("@id", toId));
+            ExecTx(tx, "INSERT INTO welcome_messages (lang, kind, sort_order, text) SELECT @to, kind, sort_order, text FROM welcome_messages WHERE lang=@from",
+                ("@to", toId), ("@from", fromId));
+            ExecTx(tx, "INSERT INTO console_messages (lang, sort_order, text) SELECT @to, sort_order, text FROM console_messages WHERE lang=@from",
+                ("@to", toId), ("@from", fromId));
+            ExecTx(tx, "INSERT INTO answering_messages (lang, sort_order, text) SELECT @to, sort_order, text FROM answering_messages WHERE lang=@from",
+                ("@to", toId), ("@from", fromId));
+            ExecTx(tx, "INSERT INTO trigger_active_category (lang, name) SELECT @to, name FROM trigger_active_category WHERE lang=@from",
+                ("@to", toId), ("@from", fromId));
+            using (var cmd = CmdTx(tx, "SELECT id, name, color_hex, cooldown_seconds, allow_repeat, use_name_prefix FROM trigger_categories WHERE lang=@from"))
+            {
+                cmd.Parameters.AddWithValue("@from", fromId);
+                using var r = cmd.ExecuteReader();
+                var cats = new List<(long id, string name, string color, int cd, int ar, int up)>();
+                while (r.Read())
+                    cats.Add((r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetInt32(3), r.GetInt32(4), r.GetInt32(5)));
+                r.Close();
+                foreach (var c in cats)
+                {
+                    long newId;
+                    using (var ins = CmdTx(tx,
+                        "INSERT INTO trigger_categories (lang, name, color_hex, cooldown_seconds, allow_repeat, use_name_prefix) VALUES (@l,@n,@c,@cd,@ar,@up)"))
+                    {
+                        ins.Parameters.AddWithValue("@l", toId);
+                        ins.Parameters.AddWithValue("@n", c.name);
+                        ins.Parameters.AddWithValue("@c", c.color);
+                        ins.Parameters.AddWithValue("@cd", c.cd);
+                        ins.Parameters.AddWithValue("@ar", c.ar);
+                        ins.Parameters.AddWithValue("@up", c.up);
+                        ins.ExecuteNonQuery();
+                        newId = LastInsertId(tx);
+                    }
+                    ExecTx(tx, "INSERT INTO trigger_entries (category_id, command, response, sort_order) SELECT @nid, command, response, sort_order FROM trigger_entries WHERE category_id=@oid",
+                        ("@nid", newId), ("@oid", c.id));
+                }
+            }
+            tx.Commit();
+        }
     }
 
     private static List<string> ReadStringArray(JsonElement el)

@@ -2,9 +2,9 @@
 
 Windows desktop companion for **IMVU Next** chat rooms. IMVU runs inside the app (WebView2). The companion can greet joiners, answer `!commands`, record AFK notes, send notices to people in the room, and check for updates automatically.
 
-**Current release:** [v0.9.98](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
+**Current release:** [v0.9.99](https://github.com/BadCharmVU/IMVUCompanion/releases/latest)
 
-Download **`IMVUCompanion-Setup-v0.9.98.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
+Download **`IMVUCompanion-Setup-v0.9.99.exe`** from [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases/latest). Ignore GitHub’s auto-generated “Source code” archives — they are not the app installer.
 
 ---
 
@@ -15,7 +15,8 @@ Download **`IMVUCompanion-Setup-v0.9.98.exe`** from [Releases](https://github.co
 - Second optional welcome line (public or whisper)
 - **Message Recorder Machine** — AFK notes via a custom trigger, plus incoming whispers
 - **Room Console** — live room roster: message, whisper, or remove people in the room
-- **!Commands** with categories and languages (English / Russian)
+- **Presets** — each preset is its own Welcome, Triggers, Recorder answering, and Room Console pack (English and Русский ship as the first two)
+- **!Commands** with categories, Multiple Replies, and per-preset export/import
 - AI hook (providers configurable; maintenance reply when not set up)
 - Room-aware Companion: works while you are in a room; pauses cleanly when you leave
 - Activity log with clear categories
@@ -139,10 +140,11 @@ Update channel: public `version.json` gist referenced by the app (see `AppVersio
 
 ---
 
-## Recent changes (v0.9.98)
+## Recent changes (v0.9.99)
 
-- Recorder reply: send Public or Whisper if the user is still in the room (matched by uid)
-- Include Message in Reply, expanded `userName - ID: ####` header
+- Presets: switch Welcome, Triggers, Recorder answering, and Room Console as one pack
+- Manage Presets: add, rename, reorder, delete, export, and import (Overwrite if the name exists)
+- Trigger export/import applies only to the active preset
 
 See [Releases](https://github.com/BadCharmVU/IMVUCompanion/releases) for full notes per version.
 

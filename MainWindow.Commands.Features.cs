@@ -210,25 +210,53 @@ public partial class MainWindow
     }
 
     private string? _botSettingsErrorEditCategory;
+    private CommandsExportDto? _pendingTriggerImport;
+    private bool _pendingTriggerImportMerge;
 
-    private void ShowBotSettingsError(string title, string message, string? editCategory = null)
+    private void ShowBotSettingsError(string title, string message, string? editCategory = null, bool overwrite = false, bool success = false)
     {
         _botSettingsErrorEditCategory = string.IsNullOrWhiteSpace(editCategory) ? null : editCategory.Trim();
-        if (BotSettingsErrorTitle != null) BotSettingsErrorTitle.Text = title;
+        if (!overwrite)
+            _pendingTriggerImport = null;
+        if (BotSettingsErrorTitle != null)
+        {
+            BotSettingsErrorTitle.Text = title;
+            BotSettingsErrorTitle.Foreground = success ? HeaderActiveGreen : OverlayErrorFg;
+        }
         if (BotSettingsErrorMessage != null) BotSettingsErrorMessage.Text = message;
+        if (BotSettingsErrorOverwriteBtn != null)
+            BotSettingsErrorOverwriteBtn.Visibility = overwrite && !success ? Visibility.Visible : Visibility.Collapsed;
         if (BotSettingsErrorEditCategoryBtn != null)
             BotSettingsErrorEditCategoryBtn.Visibility =
-                _botSettingsErrorEditCategory == null ? Visibility.Collapsed : Visibility.Visible;
+                success || overwrite || _botSettingsErrorEditCategory == null ? Visibility.Collapsed : Visibility.Visible;
         if (BotSettingsErrorOverlay != null) BotSettingsErrorOverlay.Visibility = Visibility.Visible;
     }
 
     private void BotSettingsErrorOk_Click(object sender, RoutedEventArgs e)
     {
         _botSettingsErrorEditCategory = null;
+        _pendingTriggerImport = null;
+        if (BotSettingsErrorOverwriteBtn != null)
+            BotSettingsErrorOverwriteBtn.Visibility = Visibility.Collapsed;
         if (BotSettingsErrorEditCategoryBtn != null)
             BotSettingsErrorEditCategoryBtn.Visibility = Visibility.Collapsed;
         if (BotSettingsErrorOverlay != null)
             BotSettingsErrorOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private void BotSettingsErrorOverwrite_Click(object sender, RoutedEventArgs e)
+    {
+        var dto = _pendingTriggerImport;
+        bool merge = _pendingTriggerImportMerge;
+        _pendingTriggerImport = null;
+        if (BotSettingsErrorOverwriteBtn != null)
+            BotSettingsErrorOverwriteBtn.Visibility = Visibility.Collapsed;
+        if (BotSettingsErrorEditCategoryBtn != null)
+            BotSettingsErrorEditCategoryBtn.Visibility = Visibility.Collapsed;
+        if (BotSettingsErrorOverlay != null)
+            BotSettingsErrorOverlay.Visibility = Visibility.Collapsed;
+        if (dto != null)
+            CommitTriggerImport(dto, merge, overwrite: true);
     }
 
     private void BotSettingsErrorEditCategory_Click(object sender, RoutedEventArgs e)
@@ -504,7 +532,7 @@ public partial class MainWindow
     {
         if (ExportCategoryList == null) return;
         ExportCategoryList.Items.Clear();
-        foreach (var key in _commandCategories.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))
+        foreach (var key in CategoriesForLanguage(_commandLanguage).OrderBy(k => k, StringComparer.OrdinalIgnoreCase))
         {
             ExportCategoryList.Items.Add(new CheckBox
             {
@@ -548,7 +576,8 @@ public partial class MainWindow
             return;
         }
 
-        string label = selected.Count == _commandCategories.Count ? "all" :
+        int presetCatCount = CategoriesForLanguage(_commandLanguage).Count();
+        string label = selected.Count == presetCatCount ? "all" :
             string.Join("-", selected.Take(3)).Replace(" ", "");
         var dlg = new SaveFileDialog
         {
@@ -580,9 +609,11 @@ public partial class MainWindow
             SchemaVersion = CommandsSchemaVersion,
             ExportedAt = DateTime.UtcNow.ToString("o")
         };
+        string lang = _commandLanguage;
         foreach (var name in categoryNames)
         {
-            if (!_commandCategories.TryGetValue(name, out var langs)) continue;
+            if (!_commandCategories.TryGetValue(name, out var langs) || langs == null) continue;
+            if (!langs.TryGetValue(lang, out var entries) || entries == null) continue;
             var s = GetOrCreateCategorySettings(name);
             var cat = new CategoryExportDto
             {
@@ -594,15 +625,11 @@ public partial class MainWindow
                     ColorHex = s.ColorHex
                 }
             };
-            foreach (var langKv in langs)
+            cat.Languages[lang] = entries.Select(e => new CommandEntryExportDto
             {
-                if (langKv.Value == null || langKv.Value.Count == 0) continue;
-                cat.Languages[langKv.Key] = langKv.Value.Select(e => new CommandEntryExportDto
-                {
-                    Command = e.Command,
-                    Response = e.Response
-                }).ToList();
-            }
+                Command = e.Command,
+                Response = e.Response
+            }).ToList();
             dto.Categories[name] = cat;
         }
         return dto;
@@ -667,7 +694,6 @@ public partial class MainWindow
 
         bool merge = ImportMergeReplaceCheck?.IsChecked != false;
 
-        // Cross-category trigger check against final state
         string? conflict = FindImportTriggerConflict(dto, merge);
         if (conflict != null)
         {
@@ -675,31 +701,51 @@ public partial class MainWindow
             return;
         }
 
+        var blocked = FindNoMultiReplyImportConflicts(dto, merge);
+        if (blocked.Count > 0)
+        {
+            _pendingTriggerImport = dto;
+            _pendingTriggerImportMerge = merge;
+            string names = string.Join(", ", blocked.Select(n => "'" + n + "'"));
+            ShowBotSettingsError(
+                "Multiple replies not allowed",
+                blocked.Count == 1
+                    ? $"Category {names} does not allow Multiple Replies.\nOverwrite existing data for this preset, or cancel."
+                    : $"These categories do not allow Multiple Replies:\n{names}.\nOverwrite existing data for this preset, or cancel.",
+                overwrite: true);
+            return;
+        }
+
+        CommitTriggerImport(dto, merge, overwrite: false);
+    }
+
+    private void CommitTriggerImport(CommandsExportDto dto, bool merge, bool overwrite)
+    {
         try
         {
+            var forceReplace = overwrite
+                ? new HashSet<string>(FindNoMultiReplyImportConflicts(dto, merge), StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             if (!merge)
-            {
-                _commandCategories.Clear();
-                _categorySettings.Clear();
-            }
+                ClearActivePresetCategories();
 
             foreach (var catKv in dto.Categories)
             {
-                ApplyImportedCategory(catKv.Key, catKv.Value);
+                bool replaceCat = !merge || forceReplace.Contains(catKv.Key);
+                ApplyImportedCategory(catKv.Key, catKv.Value, replaceCat);
             }
 
             EnsureSettingsForAllCategories();
-            if (string.IsNullOrEmpty(_currentCommandCategory) || !_commandCategories.ContainsKey(_currentCommandCategory))
-                _currentCommandCategory = _commandCategories.Keys.FirstOrDefault() ?? "General";
-            _activeCommandCategory = _currentCommandCategory;
-            PopulateCategoryCombo();
-            PopulateCategoryFilterCombo();
-            EnsureCategoryComboSelected();
-            RefreshCommandsList();
             SaveCommands();
+            RefreshActiveTriggerUi();
             if (ImportCommandsModal != null)
                 ImportCommandsModal.Visibility = Visibility.Collapsed;
-            AppendLog($"Imported {dto.Categories.Count} categor(ies) ({(merge ? "merge" : "replace")}).", LogCategory.Info);
+            AppendLog($"Imported {dto.Categories.Count} categor(ies) into the active preset ({(merge ? "merge" : "replace")}).", LogCategory.Info);
+            ShowBotSettingsError(
+                "Import complete",
+                "Triggers were imported into the active preset.",
+                success: true);
         }
         catch (Exception ex)
         {
@@ -707,61 +753,96 @@ public partial class MainWindow
         }
     }
 
+    private void RefreshActiveTriggerUi()
+    {
+        BindCategorySettingsToLanguage(_commandLanguage);
+        if (string.IsNullOrEmpty(_currentCommandCategory) ||
+            !CategoryExistsForCurrentLanguage(_currentCommandCategory))
+            _currentCommandCategory = CategoriesForLanguage(_commandLanguage).FirstOrDefault() ?? "General";
+        _activeCommandCategory = _currentCommandCategory;
+        _activeCategoryByLang[_commandLanguage] = _currentCommandCategory;
+        _commandFilterCategory = null;
+        _commandsPageIndex = 0;
+        PopulateCategoryCombo();
+        PopulateCategoryFilterCombo(selectAll: true);
+        EnsureCategoryComboSelected();
+        RefreshCommandsList();
+    }
+
+    private void ClearActivePresetCategories()
+    {
+        string lang = _commandLanguage;
+        foreach (var catKv in _commandCategories.ToList())
+        {
+            catKv.Value?.Remove(lang);
+            if (catKv.Value == null || catKv.Value.Count == 0)
+                _commandCategories.Remove(catKv.Key);
+        }
+        _categorySettings.Clear();
+    }
+
+    private List<CommandEntry> EntriesFromExportForActivePreset(CategoryExportDto cat)
+    {
+        var empty = new List<CommandEntry>();
+        if (cat.Languages == null || cat.Languages.Count == 0)
+            return empty;
+
+        List<CommandEntryExportDto>? raw = null;
+        if (cat.Languages.TryGetValue(_commandLanguage, out var exact) && exact != null)
+            raw = exact;
+        else if (cat.Languages.Count == 1)
+            raw = cat.Languages.Values.FirstOrDefault();
+        else if (cat.Languages.TryGetValue("en", out var en) && en != null)
+            raw = en;
+        else
+            raw = cat.Languages.Values.FirstOrDefault(v => v != null);
+
+        if (raw == null) return empty;
+        return raw.Select(e => new CommandEntry
+        {
+            Command = e.Command ?? "",
+            Response = e.Response ?? ""
+        }).ToList();
+    }
+
     private string? FindImportTriggerConflict(CommandsExportDto dto, bool merge)
     {
-        // Build map: trigger -> category for current language after import intent
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        void add(string cat, string lang, string cmd)
-        {
-            string n = NormalizeCommand(cmd);
-            if (string.IsNullOrEmpty(n)) return;
-            // Only check current language for runtime conflict; still scan all langs in file vs each other
-            if (map.TryGetValue(lang + "\0" + n, out var existing) &&
-                !string.Equals(existing, cat, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException(
-                    $"Import has trigger '{n}' in both '{existing}' and '{cat}' (language '{lang}'). " +
-                    "The same trigger cannot exist in more than one category for a language.");
-            map[lang + "\0" + n] = cat;
-        }
 
         try
         {
-            foreach (var catKv in dto.Categories)
-            {
-                if (catKv.Value?.Languages == null) continue;
-                foreach (var langKv in catKv.Value.Languages)
-                {
-                    if (langKv.Value == null) continue;
-                    foreach (var e in langKv.Value)
-                        add(catKv.Key, langKv.Key, e.Command);
-                }
-            }
-
             if (merge)
             {
                 foreach (var catKv in _commandCategories)
                 {
-                    // Skip categories that will be fully replaced by import of same name
-                    if (dto.Categories.ContainsKey(catKv.Key)) continue;
-                    foreach (var langKv in catKv.Value)
+                    if (catKv.Value == null) continue;
+                    foreach (var e in GetCommandLangListOrEmpty(catKv.Value, _commandLanguage))
                     {
-                        if (langKv.Value == null) continue;
-                        foreach (var e in langKv.Value)
-                        {
-                            string n = NormalizeCommand(e.Command);
-                            if (string.IsNullOrEmpty(n)) continue;
-                            string key = langKv.Key + "\0" + n;
-                            if (map.TryGetValue(key, out var importCat) &&
-                                !string.Equals(importCat, catKv.Key, StringComparison.OrdinalIgnoreCase))
-                            {
-                                return
-                                    $"Import would place trigger '{n}' in category '{importCat}', " +
-                                    $"but it already exists in category '{catKv.Key}' (language '{langKv.Key}'). " +
-                                    "Remove or rename one side, or use Replace All.";
-                            }
-                        }
+                        string n = NormalizeCommand(e.Command);
+                        if (string.IsNullOrEmpty(n)) continue;
+                        if (map.TryGetValue(n, out var existing) &&
+                            !string.Equals(existing, catKv.Key, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        map[n] = catKv.Key;
                     }
+                }
+            }
+
+            foreach (var catKv in dto.Categories)
+            {
+                foreach (var e in EntriesFromExportForActivePreset(catKv.Value))
+                {
+                    string n = NormalizeCommand(e.Command);
+                    if (string.IsNullOrEmpty(n)) continue;
+                    if (map.TryGetValue(n, out var existing) &&
+                        !string.Equals(existing, catKv.Key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return
+                            $"Import would place trigger '{n}' in category '{catKv.Key}', " +
+                            $"but it already exists in category '{existing}' for this preset. " +
+                            "Remove or rename one side, or turn Merge off to replace this preset's categories.";
+                    }
+                    map[n] = catKv.Key;
                 }
             }
         }
@@ -773,22 +854,64 @@ public partial class MainWindow
         return null;
     }
 
-    private void ApplyImportedCategory(string name, CategoryExportDto cat)
+    private List<string> FindNoMultiReplyImportConflicts(CommandsExportDto dto, bool merge)
     {
-        var langs = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
-        if (cat.Languages != null)
+        var names = new List<string>();
+        foreach (var catKv in dto.Categories)
         {
-            foreach (var langKv in cat.Languages)
+            string name = catKv.Key;
+            var incoming = EntriesFromExportForActivePreset(catKv.Value);
+            bool exists = CategoryExistsForCurrentLanguage(name);
+            bool allowRepeat = exists
+                ? GetOrCreateCategorySettings(name).AllowRepeatTriggers
+                : catKv.Value.Settings?.AllowRepeatTriggers ?? false;
+            if (allowRepeat) continue;
+
+            bool importHasDupes = incoming
+                .Select(e => NormalizeCommand(e.Command))
+                .Where(c => c.Length > 0)
+                .GroupBy(c => c, StringComparer.OrdinalIgnoreCase)
+                .Any(g => g.Count() > 1);
+
+            bool wouldAddSecondReply = false;
+            if (exists && merge &&
+                _commandCategories.TryGetValue(name, out var langs) && langs != null)
             {
-                if (langKv.Value == null) continue;
-                langs[langKv.Key] = langKv.Value.Select(e => new CommandEntry
-                {
-                    Command = e.Command ?? "",
-                    Response = e.Response ?? ""
-                }).ToList();
+                var existing = new HashSet<string>(
+                    GetCommandLangListOrEmpty(langs, _commandLanguage)
+                        .Select(e => NormalizeCommand(e.Command))
+                        .Where(c => c.Length > 0),
+                    StringComparer.OrdinalIgnoreCase);
+                wouldAddSecondReply = incoming.Any(e =>
+                    existing.Contains(NormalizeCommand(e.Command)));
             }
+
+            if (importHasDupes || wouldAddSecondReply)
+                names.Add(name);
         }
-        _commandCategories[name] = langs;
+        return names;
+    }
+
+    private void ApplyImportedCategory(string name, CategoryExportDto cat, bool replace)
+    {
+        if (!_commandCategories.TryGetValue(name, out var langs) || langs == null)
+        {
+            langs = new Dictionary<string, List<CommandEntry>>(StringComparer.OrdinalIgnoreCase);
+            _commandCategories[name] = langs;
+        }
+
+        var incoming = EntriesFromExportForActivePreset(cat);
+        if (!replace &&
+            langs.TryGetValue(_commandLanguage, out var existing) &&
+            existing != null && existing.Count > 0)
+        {
+            existing.AddRange(incoming);
+        }
+        else
+        {
+            langs[_commandLanguage] = incoming;
+        }
+
         var st = cat.Settings ?? new CategorySettingsExportDto();
         _categorySettings[name] = new CategorySettings
         {

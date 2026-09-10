@@ -312,6 +312,7 @@ public partial class MainWindow : Window
             _robustHeartbeatTimer.Elapsed += (s, args) => { try { File.AppendAllText(@"C:\Users\serve\imvu_companion_crash.log", $"[{DateTime.Now:HH:mm:ss}] ROBUST: alive\n"); } catch { } };
             _robustHeartbeatTimer.Start();
 
+            LoadPresetRegistry();
             LoadMessages();
             SelectAppLanguageCombo(_currentLanguage);
             RefreshWelcomeUi();
@@ -1336,12 +1337,6 @@ public partial class MainWindow : Window
         AppendLog($"Welcome messages loaded ({n1} + {( _welcome2Enabled ? n2.ToString() : "off")}) from companion.db", LogCategory.Info);
     }
 
-    private static IEnumerable<string> AppLanguageCodes()
-    {
-        yield return "en";
-        yield return "ru";
-    }
-
     private static List<string> DefaultWelcome1Texts(string lang) =>
         string.Equals(lang, "ru", StringComparison.OrdinalIgnoreCase)
             ? new List<string> { DefaultWelcomeMsgRu }
@@ -1391,6 +1386,7 @@ public partial class MainWindow : Window
                 Msg1 = _welcome1.Messages,
                 Msg2 = _welcome2.Messages
             });
+            SaveActivePresetPack();
         }
         catch (Exception ex) { AppendLog("Save messages err: " + ex.Message, LogCategory.Error); }
     }
@@ -1620,6 +1616,35 @@ public partial class MainWindow : Window
             if (hit != null) return hit;
         }
         return null;
+    }
+
+    private const int GrowingListRowPx = 28;
+    private const int GrowingListMinRows = 4;
+    private const int GrowingListMaxRows = 10;
+
+    /// <summary>
+    /// Grows a list from 4 to 10 visible rows. Scrollbar gutter is reserved in XAML
+    /// (Visible, not Auto) so enabling scroll at 11+ items does not shift row buttons.
+    /// </summary>
+    private static void SizeGrowingList(ListBox list, int count)
+    {
+        int visible = Math.Clamp(count, GrowingListMinRows, GrowingListMaxRows);
+        double h = visible * GrowingListRowPx;
+        list.MinHeight = GrowingListMinRows * GrowingListRowPx;
+        list.MaxHeight = GrowingListMaxRows * GrowingListRowPx;
+        list.Height = h;
+    }
+
+    private void ResetGrowingListScroll(ListBox list, int count)
+    {
+        list.Dispatcher.BeginInvoke(() =>
+        {
+            list.UpdateLayout();
+            var sv = FindDescendantScrollViewer(list);
+            if (sv == null) return;
+            if (count <= GrowingListMaxRows)
+                sv.ScrollToVerticalOffset(0);
+        }, DispatcherPriority.Loaded);
     }
 
     private EventHandler? _smoothScrollTick;
@@ -2308,7 +2333,8 @@ public partial class MainWindow : Window
 
     private void SetAppLanguage(string lang, bool refreshUi = true)
     {
-        if (string.IsNullOrEmpty(lang)) return;
+        if (string.IsNullOrEmpty(lang) || lang == ManagePresetsTag) return;
+        SaveActivePresetPack();
         if (!string.IsNullOrEmpty(_commandLanguage) && !string.IsNullOrEmpty(_currentCommandCategory))
             _activeCategoryByLang[_commandLanguage] = _currentCommandCategory;
         if (_dmReady)
@@ -2348,6 +2374,7 @@ public partial class MainWindow : Window
             ApplyReceiptLanguage(lang);
             SaveRecorderSettings();
         }
+        LoadActivePresetPack();
         if (refreshUi)
         {
             RefreshWelcomeList(1);
@@ -2408,9 +2435,17 @@ public partial class MainWindow : Window
 
     private void AppLanguageCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_appLanguageSyncing || AppLanguageCombo?.SelectedItem == null) return;
+        if (_appLanguageSyncing || _presetComboQuiet || AppLanguageCombo?.SelectedItem == null) return;
         if (AppLanguageCombo.SelectedItem is ComboBoxItem item && item.Tag is string lang)
+        {
+            if (lang == ManagePresetsTag)
+            {
+                SelectAppLanguageCombo(_currentLanguage);
+                OpenPresetManager();
+                return;
+            }
             SetAppLanguage(lang);
+        }
     }
 
     private void Welcome1DeliveryCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2467,7 +2502,10 @@ public partial class MainWindow : Window
             : box == RecorderReceiptEditBox ? RecorderReceiptClearBtn
             : box == CommandEditBox ? CommandEditClearBtn
             : box == CommandResponseEditBox ? CommandResponseEditClearBtn
+            : box == PresetNameEditBox ? PresetNameClearBtn
             : null;
+        if (box == PresetNameEditBox)
+            UpdatePresetNamePlaceholder();
         if (btn != null)
             btn.Visibility = string.IsNullOrEmpty(box.Text) ? Visibility.Collapsed : Visibility.Visible;
     }
@@ -2484,6 +2522,7 @@ public partial class MainWindow : Window
         else if (sender == RecorderReceiptClearBtn) { box = RecorderReceiptEditBox; list = RecorderReceiptList; }
         else if (sender == CommandEditClearBtn) box = CommandEditBox;
         else if (sender == CommandResponseEditClearBtn) box = CommandResponseEditBox;
+        else if (sender == PresetNameClearBtn) { box = PresetNameEditBox; list = PresetManagerList; }
         if (box == null) return;
         box.Clear();
         if (list != null) list.SelectedIndex = -1;
