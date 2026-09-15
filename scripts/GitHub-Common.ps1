@@ -20,6 +20,53 @@ function Get-ProjectVersion {
     return $m.Groups[1].Value.Trim()
 }
 
+function Set-ProjectVersion {
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [Parameter(Mandatory)][string]$Version
+    )
+    $csprojPath = Join-Path $ProjectRoot "IMVUCompanion.csproj"
+    $csproj = Get-Content $csprojPath -Raw
+    $four = if ($Version -match '^\d+\.\d+\.\d+$') { "$Version.0" } else { $Version }
+    $csproj = [regex]::Replace($csproj, '<Version>[^<]+</Version>', "<Version>$Version</Version>")
+    $csproj = [regex]::Replace($csproj, '<AssemblyVersion>[^<]+</AssemblyVersion>', "<AssemblyVersion>$four</AssemblyVersion>")
+    $csproj = [regex]::Replace($csproj, '<FileVersion>[^<]+</FileVersion>', "<FileVersion>$four</FileVersion>")
+    [System.IO.File]::WriteAllText($csprojPath, $csproj)
+    Write-Host "==> csproj version set to $Version"
+}
+
+# If csproj still matches the latest git tag, bump the last number so a ship cannot reuse it.
+function Ensure-ReleaseVersion {
+    param(
+        [Parameter(Mandatory)][string]$ProjectRoot,
+        [string]$GitExe
+    )
+    $current = Get-ProjectVersion -ProjectRoot $ProjectRoot
+    $lastTag = $null
+    if ($GitExe) {
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $lastTag = (& $GitExe -C $ProjectRoot describe --tags --abbrev=0 2>$null)
+        $ErrorActionPreference = $prevEap
+        if ($lastTag) { $lastTag = "$lastTag".Trim().TrimStart('v', 'V') }
+    }
+    if (-not $lastTag -or $current -ne $lastTag) {
+        Write-Host "==> Release version: $current"
+        return $current
+    }
+
+    $parts = $current.Split('.')
+    if ($parts.Length -lt 2) { throw "Cannot bump version '$current'" }
+    $last = $parts.Length - 1
+    $n = 0
+    [int]::TryParse($parts[$last], [ref]$n) | Out-Null
+    $parts[$last] = [string]($n + 1)
+    $next = $parts -join '.'
+    Set-ProjectVersion -ProjectRoot $ProjectRoot -Version $next
+    Write-Host "==> csproj was still $current (last tag). Bumped to $next"
+    return $next
+}
+
 function Find-ReleaseInstaller {
     param(
         [string]$ProjectRoot,

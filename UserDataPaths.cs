@@ -25,6 +25,18 @@ internal static class UserDataPaths
         }
     }
 
+    /// <summary>Unhandled-exception log on this machine's LocalAppData — never a developer PC path.</summary>
+    public static string CrashLogFile => GetConfigFile("crash.log");
+
+    public static void AppendCrash(string message)
+    {
+        try
+        {
+            File.AppendAllText(CrashLogFile, message);
+        }
+        catch { }
+    }
+
     /// <summary>
     /// Path for a leftover/legacy file under the data folder. Does not copy from the exe directory.
     /// </summary>

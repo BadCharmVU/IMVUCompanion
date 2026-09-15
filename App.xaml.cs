@@ -1,5 +1,4 @@
 ﻿using System;
-using System.IO;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -10,38 +9,11 @@ namespace IMVUCompanion;
 /// </summary>
 public partial class App : Application
 {
-    private const string CrashLogPath = @"C:\Users\serve\imvu_companion_crash.log";
-
     public App()
     {
-        // Catch everything possible at startup
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         this.DispatcherUnhandledException += OnDispatcherUnhandledException;
-
-        // Also log that the app process started
-        SafeLog("App process started successfully (App ctor reached).");
-
-        // Prevent the app from shutting down when the main window closes.
         this.ShutdownMode = ShutdownMode.OnExplicitShutdown;
-
-        this.Exit += (s, e) =>
-        {
-            try
-            {
-                SafeLog("Application Exit event. Code=" + e.ApplicationExitCode);
-            }
-            catch { }
-        };
-
-        // Log process exit for hard terminations
-        AppDomain.CurrentDomain.ProcessExit += (s, e) =>
-        {
-            try
-            {
-                SafeLog("ProcessExit event fired");
-            }
-            catch { }
-        };
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
@@ -74,7 +46,7 @@ public partial class App : Application
         catch { }
     }
 
-    private static void SafeLog(string message, Exception ex = null)
+    private static void SafeLog(string message, Exception? ex = null)
     {
         try
         {
@@ -82,7 +54,7 @@ public partial class App : Application
             if (ex != null)
                 line += "\n" + ex.ToString();
 
-            File.AppendAllText(CrashLogPath, line + "\n\n");
+            UserDataPaths.AppendCrash(line + "\n\n");
         }
         catch
         {

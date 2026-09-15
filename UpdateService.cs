@@ -84,20 +84,20 @@ internal static class UpdateService
                 displayVersion = manifest.Version;
                 notes = manifest.Notes;
             }
-            if (release != null && (displayVersion == null || release.Version > displayVersion))
+            if (release != null && (displayVersion == null || AppVersion.IsNewer(release.Version, displayVersion)))
             {
                 displayVersion = release.Version;
                 notes = string.IsNullOrWhiteSpace(release.Notes) ? notes : release.Notes;
             }
 
-            bool updateAvailable = displayVersion != null && displayVersion > AppVersion.Current;
+            bool updateAvailable = AppVersion.IsNewer(displayVersion, AppVersion.Current);
 
             // Download/apply: ONLY from gist manifest — https URL + sha256 required. Strict, no exceptions.
             bool canDownload = false;
             string downloadUrl = "";
             string sha256 = "";
             if (manifest != null &&
-                manifest.Version > AppVersion.Current &&
+                AppVersion.IsNewer(manifest.Version, AppVersion.Current) &&
                 IsHttpsUrl(manifest.DownloadUrl) &&
                 IsValidSha256Hex(manifest.Sha256))
             {
@@ -191,8 +191,9 @@ internal static class UpdateService
     {
         text = (text ?? "").Trim().TrimStart('v', 'V');
         var parts = text.Split('.');
-        if (parts.Length == 1) return parts[0] + ".0.0";
-        if (parts.Length == 2) return parts[0] + "." + parts[1] + ".0";
+        if (parts.Length == 1) return parts[0] + ".0.0.0";
+        if (parts.Length == 2) return parts[0] + "." + parts[1] + ".0.0";
+        if (parts.Length == 3) return text + ".0";
         return text;
     }
 

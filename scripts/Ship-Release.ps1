@@ -18,7 +18,8 @@ Write-Host ""
 & (Join-Path $PSScriptRoot "Preflight-GitHub.ps1")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$version = Get-ProjectVersion -ProjectRoot $root
+$gitForBump = Get-GitExe
+$version = Ensure-ReleaseVersion -ProjectRoot $root -GitExe $gitForBump
 $tag = "v$version"
 
 if (-not $SkipBuild) {

@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Reflection;
 
 namespace IMVUCompanion;
@@ -56,19 +55,40 @@ internal static class AppVersion
     {
         get
         {
+            try
+            {
+                string? info = Assembly.GetExecutingAssembly()
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                    ?.InformationalVersion;
+                if (!string.IsNullOrWhiteSpace(info))
+                {
+                    string ver = info.Split('+', '-')[0].Trim();
+                    if (Version.TryParse(ver, out Version? parsed) && parsed != null)
+                        return Normalize(parsed);
+                }
+            }
+            catch { }
+
             var v = Assembly.GetExecutingAssembly().GetName().Version;
-            return v ?? new Version(0, 9, 99);
+            return Normalize(v ?? new Version(0, 10, 0));
         }
     }
 
-    /// <summary>v0.9 or v0.9.2 — always includes patch when non-zero so updates are visible.</summary>
+    /// <summary>
+    /// Pad unspecified Build/Revision to 0 so gist "0.10.0" equals assembly 0.10.0.0.
+    /// </summary>
+    public static Version Normalize(Version v) =>
+        new(v.Major, v.Minor, Math.Max(v.Build, 0), Math.Max(v.Revision, 0));
+
+    public static bool IsNewer(Version? remote, Version? local) =>
+        remote != null && (local == null || Normalize(remote) > Normalize(local));
+
+    /// <summary>Always three segments so v0.10.0 is visible, not "v0.10".</summary>
     public static string FormatLabel(Version? v)
     {
         if (v == null) return "v?";
-        // System.Version uses Major.Minor.Build.Revision; Build is the third segment (patch).
-        if (v.Build > 0)
-            return $"v{v.Major}.{v.Minor}.{v.Build}";
-        return $"v{v.Major}.{v.Minor}";
+        v = Normalize(v);
+        return $"v{v.Major}.{v.Minor}.{v.Build}";
     }
 
     public static string ShortLabel => FormatLabel(Current);
