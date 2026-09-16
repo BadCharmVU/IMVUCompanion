@@ -1,6 +1,6 @@
 {
     "version":  "1.0.1",
     "downloadUrl":  "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v1.0.1/IMVUCompanion-Setup-v1.0.1.exe",
-    "sha256":  "",
+    "sha256":  "65b0e96c10cefb9728145dd4439fac23620063aa1267c7d7b6fdad286119bb29",
     "releaseNotes":  "v1.0.1\n\n- Direct (DM) is no longer silent: a confirmation appears when a DM is sent successfully and closes itself after a few seconds.\n- Minor Activity Log changes for sent and reply lines."
 }
