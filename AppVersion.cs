@@ -70,7 +70,7 @@ internal static class AppVersion
             catch { }
 
             var v = Assembly.GetExecutingAssembly().GetName().Version;
-            return Normalize(v ?? new Version(1, 0, 0));
+            return Normalize(v ?? new Version(1, 0, 1));
         }
     }
 

@@ -1,6 +1,6 @@
 {
-    "version":  "1.0.0",
-    "downloadUrl":  "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v1.0.0/IMVUCompanion-Setup-v1.0.0.exe",
-    "sha256":  "42112a1e96da20fae537d19c796a5e66d818f047c00207ae8110914222aa617b",
-    "releaseNotes":  "v1.0.0\n\nRooms\n- Companion follows the restored (active) room only.\n- Minimize: Room Console is cleared, Companion pauses, and a Room Minimized overlay stays up until you restore. Restore resumes and fills the console from the live room.\n- Another room becomes active: Companion stops (press Start yourself). Focus moves to that room. Closing a minimized room no longer leaves the old user list stuck on the new room.\n- Activity log: Entered / Minimized / Exited room-### | room name.\n\nPresets\n- Attach a preset to a room-###. Entering or restoring that room switches to the preset automatically.\n- Export and import include the attached room id.\n- Preset manager: one-line names (21 characters), attach-to-room fields, delete confirm uses CANCEL.\n\nDirect messages\n- Direct (DM) from Room Console and from Message Recorder, including users who are not in the room.\n- Send DM uses IMVU native conversations. You can reply from recorded messages at any time, from any place."
+    "version":  "1.0.1",
+    "downloadUrl":  "https://github.com/BadCharmVU/IMVUCompanion/releases/download/v1.0.1/IMVUCompanion-Setup-v1.0.1.exe",
+    "sha256":  "",
+    "releaseNotes":  "v1.0.1\n\n- Direct (DM) is no longer silent: a confirmation appears when a DM is sent successfully and closes itself after a few seconds.\n- Minor Activity Log changes for sent and reply lines."
 }

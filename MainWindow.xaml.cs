@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -58,6 +59,7 @@ public partial class MainWindow : Window
     }
 
     private DispatcherTimer _aliveTimer;
+    private DispatcherTimer? _dmSentTimer;
 
     private bool _botRunning = false;
     /// <summary>Bot was started but room is gone — processing/timer paused; resume on re-enter without reset.</summary>
@@ -260,7 +262,72 @@ public partial class MainWindow : Window
     private string BotLogName =>
         string.IsNullOrWhiteSpace(_botDisplayName) ? "Bot" : _botDisplayName.Trim();
 
+    private void ShowDmSentModal(string? userName)
+    {
+        string name = string.IsNullOrWhiteSpace(userName) ? "user" : userName.Trim();
+        if (DmSentTitle != null)
+            DmSentTitle.Text = "DM to " + name;
+        if (DmSentOverlay != null)
+            DmSentOverlay.Visibility = Visibility.Visible;
+        try { _dmSentTimer?.Stop(); } catch { }
+        _dmSentTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        _dmSentTimer.Tick += (_, _) => DmSentClose_Click(this, new RoutedEventArgs());
+        _dmSentTimer.Start();
+    }
+
+    private void DmSentClose_Click(object sender, RoutedEventArgs e)
+    {
+        try { _dmSentTimer?.Stop(); } catch { }
+        _dmSentTimer = null;
+        if (DmSentOverlay != null)
+            DmSentOverlay.Visibility = Visibility.Collapsed;
+    }
+
     private void AppendActivityLog(string msg, LogCategory cat) => AppendLog(msg, cat, toActivityLog: true);
+
+    private void LogOutgoingToUser(string? userName, string? message, LogCategory cat, string? tag = null)
+    {
+        string name = string.IsNullOrWhiteSpace(userName) ? "user" : userName.Trim();
+        string body = (message ?? "").Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ').Trim();
+        string line = string.IsNullOrWhiteSpace(tag)
+            ? "to " + name + " > " + body
+            : tag.Trim() + " to " + name + " > " + body;
+        AppendActivityLog(line, cat);
+    }
+
+    private string FitActivityLine(string msg)
+    {
+        msg = (msg ?? "").Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ');
+        double maxW;
+        try
+        {
+            maxW = LogBox != null && LogBox.ActualWidth > 50 ? LogBox.ActualWidth - 18 : 260;
+        }
+        catch { maxW = 260; }
+        try
+        {
+            double dip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+            var typeface = new Typeface(new FontFamily("Consolas"), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+            var full = new FormattedText(msg, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+                typeface, 10, Brushes.White, dip);
+            if (full.Width <= maxW) return msg;
+            const string ell = "...";
+            int lo = 0, hi = msg.Length;
+            while (lo < hi)
+            {
+                int mid = (lo + hi + 1) / 2;
+                var t = new FormattedText(msg[..mid] + ell, CultureInfo.CurrentCulture, FlowDirection.LeftToRight,
+                    typeface, 10, Brushes.White, dip);
+                if (t.Width <= maxW) lo = mid;
+                else hi = mid - 1;
+            }
+            return lo <= 0 ? ell : msg[..lo] + ell;
+        }
+        catch
+        {
+            return msg.Length <= 48 ? msg : msg[..45] + "...";
+        }
+    }
 
     private void EnsureLogDocWrap()
     {
@@ -283,8 +350,9 @@ public partial class MainWindow : Window
                 if (LogBox.Document == null)
                     LogBox.Document = new FlowDocument { PagePadding = new Thickness(4) };
                 EnsureLogDocWrap();
+                string head = FitActivityLine("[Event] " + verb + " " + roomId);
                 var para = new Paragraph { Margin = new Thickness(0), LineHeight = 16 };
-                para.Inlines.Add(new Run("[Event] " + verb + " " + roomId)
+                para.Inlines.Add(new Run(head)
                 {
                     Foreground = BrushForCategory(LogCategory.Info)
                 });
@@ -320,6 +388,7 @@ public partial class MainWindow : Window
                 {
                     if (LogBox.Document == null) LogBox.Document = new FlowDocument { PagePadding = new Thickness(4) };
                     EnsureLogDocWrap();
+                    msg = FitActivityLine(msg);
                     var para = new Paragraph(new Run(msg) { Foreground = BrushForCategory(cat) }) { Margin = new Thickness(0), LineHeight = 16 };
                     LogBox.Document.Blocks.Add(para);
                     while (LogBox.Document.Blocks.Count > 400) LogBox.Document.Blocks.Remove(LogBox.Document.Blocks.FirstBlock);

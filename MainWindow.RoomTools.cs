@@ -1295,6 +1295,7 @@ public partial class MainWindow
         }
 
         string body = ApplyMessageTemplate(msg.Text, user.Name);
+        string logBody = body;
         string? result;
         if (_dmAsWhisper)
         {
@@ -1302,7 +1303,7 @@ public partial class MainWindow
                 proactiveWhisperToUser: true, joinUserId: user.UserId,
                 requireBotActive: false, logSend: false);
             if (result == "ok")
-                AppendActivityLog($"[Sent W.DM] {user.Name} {body}", LogCategory.Whisper);
+                LogOutgoingToUser(user.Name, logBody, LogCategory.Whisper, "[Sent W]");
             else
                 AppendLog("Whisper DM failed: " + (result ?? "unknown"), LogCategory.Warning);
         }
@@ -1311,7 +1312,7 @@ public partial class MainWindow
             body = PrefixPublicDm(user.Name, body);
             result = await SendToImvuChat(body, requireBotActive: false, logSend: false);
             if (result == "ok")
-                AppendActivityLog($"[Sent P.DM] {user.Name} {body}", LogCategory.Sent);
+                LogOutgoingToUser(user.Name, logBody, LogCategory.Sent, "[Sent P]");
             else
                 AppendLog("Public DM failed: " + (result ?? "unknown"), LogCategory.Warning);
         }
@@ -1990,7 +1991,7 @@ public partial class MainWindow
         string? result;
         if (mode == "dm")
         {
-            AppendActivityLog("[Event] Sending native DM to " + (user.Name ?? user.UserId), LogCategory.DirectDm);
+            AppendActivityLog("[Event] Sending native DM to " + (user.Name ?? user.UserId), LogCategory.Info);
             try
             {
                 if (string.IsNullOrWhiteSpace(user.UserId))
@@ -2007,8 +2008,10 @@ public partial class MainWindow
             }
             if (result != null && result.StartsWith("ok", StringComparison.Ordinal))
             {
-                AppendActivityLog("[Sent DM] " + user.Name + " " + sent, LogCategory.DirectDm);
+                LogOutgoingToUser(user.Name, body, LogCategory.DirectDm,
+                    _composeOnRecorder ? "[Reply DM]" : "[Sent DM]");
                 CloseRoomUserMessageModal();
+                ShowDmSentModal(user.Name);
             }
             else
                 AppendActivityLog("[Event] Native DM: " + (result ?? "no result"), LogCategory.Warning);
@@ -2020,7 +2023,8 @@ public partial class MainWindow
                 proactiveWhisperToUser: true, joinUserId: user.UserId,
                 requireBotActive: false, logSend: false);
             if (result == "ok")
-                AppendActivityLog($"[Sent W.DM] {user.Name} {sent}", LogCategory.Whisper);
+                LogOutgoingToUser(user.Name, body, LogCategory.Whisper,
+                    _composeOnRecorder ? "[Reply W]" : "[Sent W]");
             else
                 AppendLog("Whisper failed: " + (result ?? "unknown"), LogCategory.Warning);
         }
@@ -2028,7 +2032,8 @@ public partial class MainWindow
         {
             result = await SendToImvuChat(sent, requireBotActive: false, logSend: false);
             if (result == "ok")
-                AppendActivityLog($"[Sent P.DM] {user.Name} {sent}", LogCategory.Sent);
+                LogOutgoingToUser(user.Name, body, LogCategory.Sent,
+                    _composeOnRecorder ? "[Reply P]" : "[Sent P]");
             else
                 AppendLog("Public send failed: " + (result ?? "unknown"), LogCategory.Warning);
         }

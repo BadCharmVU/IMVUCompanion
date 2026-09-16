@@ -1610,7 +1610,7 @@
             </HeaderedContentControl.Header>
             <Grid MinHeight="80">
               <StackPanel>
-                <TextBlock Style="{StaticResource SectionTip}" Text="Send a notice to someone currently in the room." />
+                <TextBlock Style="{StaticResource SectionTip}" Text="Quicker messaging with users currently in the room" />
                 <Border Style="{StaticResource SectionContentBox}">
                   <StackPanel>
                     <Grid Height="28" MinWidth="424" Margin="0,0,0,8">
@@ -1855,6 +1855,19 @@
           </DockPanel>
         </Border>
         </Grid>
+      </Border>
+      <Border x:Name="DmSentOverlay" Visibility="Collapsed" Background="#CC12121F" Panel.ZIndex="96">
+        <Border Background="#252540" CornerRadius="12" Padding="22,18" BorderBrush="#404060" BorderThickness="1"
+                HorizontalAlignment="Center" VerticalAlignment="Center" MinWidth="240" MaxWidth="340">
+          <StackPanel>
+            <TextBlock x:Name="DmSentTitle" Text="DM to" FontSize="15" FontWeight="SemiBold" Foreground="#E8E8FF"
+                       TextAlignment="Center" HorizontalAlignment="Center" Margin="0,0,0,8" TextWrapping="Wrap" />
+            <TextBlock Text="SENT Successfully." FontSize="14" FontWeight="SemiBold" Foreground="#4ADE80"
+                       TextAlignment="Center" HorizontalAlignment="Center" Margin="0,0,0,16" />
+            <Button Content="Close" Width="100" Height="32" HorizontalAlignment="Center"
+                    Style="{StaticResource Win11Button}" Click="DmSentClose_Click" />
+          </StackPanel>
+        </Border>
       </Border>
       <Border x:Name="PresetErrorOverlay" Visibility="Collapsed" Background="#CC12121F" Panel.ZIndex="95">
         <Border Background="#252540" CornerRadius="12" Padding="20,18" BorderBrush="#404060" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center" MinWidth="260" MaxWidth="340">

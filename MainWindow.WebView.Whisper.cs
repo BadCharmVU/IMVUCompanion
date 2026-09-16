@@ -377,7 +377,7 @@ return silentWhisperStart({{escapedUid}}, {{escapedText}}, {{escapedName}});
                 if (result == "ok" || (result != null && result.StartsWith("ok", StringComparison.Ordinal)))
                 {
                     if (logSend)
-                        AppendActivityLog($"[Whisper] {whisperSpeaker ?? joinUserId} {text}", LogCategory.Whisper);
+                        LogOutgoingToUser(whisperSpeaker ?? joinUserId, text, LogCategory.Whisper);
                     return "ok";
                 }
 
@@ -440,7 +440,7 @@ return 'clicked';
         if (close1 != "closed" && close2 != "closed")
             AppendLog("Whisper panel may still be open (" + (close2 ?? close1 ?? "?") + ")", LogCategory.Warning);
         if (logSend)
-            AppendActivityLog($"[Whisper] {targetName} {message}", LogCategory.Whisper);
+            LogOutgoingToUser(targetName, message, LogCategory.Whisper);
     }
 
 
