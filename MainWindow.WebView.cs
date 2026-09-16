@@ -475,15 +475,16 @@ public partial class MainWindow
                 bool recordedWhisper = isWhisper ||
                     (string.Equals(kind, "chat", StringComparison.OrdinalIgnoreCase) &&
                      parts.Length > 3 && parts[3] == "1");
-                HandleRoomChatEvent(sp, txt, kind, joinUserId, recordedWhisper);
+                if (!_roomMinimized)
+                    HandleRoomChatEvent(sp, txt, kind, joinUserId, recordedWhisper);
 
                 bool isRoomMeta = string.Equals(kind, "leave", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(kind, "present", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(kind, "chat", StringComparison.OrdinalIgnoreCase);
                 if (isRoomMeta) return;
 
-                // Greeting / triggers only while companion is active in a live room
-                if (!IsBotActive) return;
+                // Greeting / triggers only while companion is active in a restored room
+                if (!IsBotActive || _roomMinimized || _multiRoomBlocked) return;
                 EnqueueChatLine(sp, txt, isWhisper, whisperRowRef, joinUserId);
             });
         }
@@ -514,7 +515,9 @@ public partial class MainWindow
             PageUrlText.Text = url.Length > 48 ? url[..45] + "…" : url;
 
         string state;
-        if (_botRunning && _botPausedNoRoom)
+        if (_botRunning && _pausedForMinimize)
+            state = "PAUSED (minimized)";
+        else if (_botRunning && _botPausedNoRoom)
             state = "PAUSED (no room)";
         else if (_botRunning)
             state = "RUNNING";

@@ -20,6 +20,8 @@ public partial class MainWindow
     private bool _presetsReady;
     private bool _presetComboQuiet;
     private List<PresetBundleDto>? _pendingPresetImport;
+    private string? _pendingPresetDeleteId;
+    private string? _pendingPresetDeleteName;
     private readonly List<PresetLineVm> _presetLines = new();
 
     private sealed class PresetLineVm : INotifyPropertyChanged
@@ -28,6 +30,7 @@ public partial class MainWindow
         public string Id { get; set; } = "";
         public string Name { get; set; } = "";
         public string Number { get; set; } = "";
+        public string RoomLabel { get; set; } = "";
         public int Index { get; set; }
         public bool CanMoveUp { get; set; }
         public bool CanMoveDown { get; set; }
@@ -69,6 +72,7 @@ public partial class MainWindow
         public bool ConfirmReceipt { get; set; } = true;
         public List<string> Answering { get; set; } = new();
         public string ActiveCategory { get; set; } = "General";
+        public string RoomId { get; set; } = "";
         public Dictionary<string, PresetCategoryDto> Categories { get; set; } =
             new(StringComparer.OrdinalIgnoreCase);
     }
@@ -239,6 +243,7 @@ public partial class MainWindow
         RefreshPresetManagerList();
         if (PresetNameEditBox != null) PresetNameEditBox.Text = "";
         UpdatePresetNamePlaceholder();
+        ResetPresetAttachUi();
         if (PresetManagerModal != null)
             PresetManagerModal.Visibility = Visibility.Visible;
     }
@@ -265,6 +270,7 @@ public partial class MainWindow
                 Id = p.Id,
                 Name = p.Name,
                 Number = (i + 1) + ".",
+                RoomLabel = NormalizePresetRoomId(p.RoomId),
                 Index = i,
                 CanMoveUp = i > 0,
                 CanMoveDown = i < last,
@@ -301,6 +307,115 @@ public partial class MainWindow
         if (PresetNamePlaceholder != null)
             PresetNamePlaceholder.Visibility = string.IsNullOrEmpty(PresetNameEditBox?.Text)
                 ? Visibility.Visible : Visibility.Collapsed;
+        if (PresetRoomIdPlaceholder != null)
+            PresetRoomIdPlaceholder.Visibility = string.IsNullOrEmpty(PresetRoomIdBox?.Text)
+                ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private bool _presetAttachUiSyncing;
+
+    private static string NormalizePresetRoomId(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        var m = System.Text.RegularExpressions.Regex.Match(raw.Trim(), @"room-\d[\w-]*",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        return m.Success ? m.Value.ToLowerInvariant() : "";
+    }
+
+    private string ReadPresetRoomIdFromUi()
+    {
+        if (PresetAttachRoomCheck?.IsChecked != true) return "";
+        return NormalizePresetRoomId(PresetRoomIdBox?.Text);
+    }
+
+    private void ResetPresetAttachUi()
+    {
+        _presetAttachUiSyncing = true;
+        try
+        {
+            if (PresetAttachRoomCheck != null) PresetAttachRoomCheck.IsChecked = false;
+            if (PresetUseCurrentRoomCheck != null)
+            {
+                PresetUseCurrentRoomCheck.IsChecked = false;
+                PresetUseCurrentRoomCheck.Visibility = Visibility.Collapsed;
+            }
+            if (PresetRoomIdBox != null)
+            {
+                PresetRoomIdBox.Text = "";
+                PresetRoomIdBox.IsReadOnly = false;
+            }
+            if (PresetRoomIdRow != null) PresetRoomIdRow.Visibility = Visibility.Collapsed;
+        }
+        finally { _presetAttachUiSyncing = false; }
+        UpdatePresetNamePlaceholder();
+    }
+
+    private void LoadPresetAttachUiFromSelection()
+    {
+        string attached = "";
+        if (PresetManagerList?.SelectedItem is PresetLineVm row)
+        {
+            var info = _presets.FirstOrDefault(p => string.Equals(p.Id, row.Id, StringComparison.OrdinalIgnoreCase));
+            attached = NormalizePresetRoomId(info?.RoomId);
+        }
+        _presetAttachUiSyncing = true;
+        try
+        {
+            bool attach = attached.Length > 0;
+            if (PresetAttachRoomCheck != null) PresetAttachRoomCheck.IsChecked = attach;
+            if (PresetRoomIdBox != null) PresetRoomIdBox.Text = attached;
+        }
+        finally { _presetAttachUiSyncing = false; }
+        RefreshPresetAttachUi();
+    }
+
+    private void RefreshPresetAttachUi()
+    {
+        bool attach = PresetAttachRoomCheck?.IsChecked == true;
+        if (PresetRoomIdRow != null)
+            PresetRoomIdRow.Visibility = attach ? Visibility.Visible : Visibility.Collapsed;
+        bool inRoom = _inActiveRoom && !_roomMinimized && IsRealRoomId(_boundRoomId);
+        if (PresetUseCurrentRoomCheck != null)
+            PresetUseCurrentRoomCheck.Visibility = attach && inRoom ? Visibility.Visible : Visibility.Collapsed;
+        if (!attach)
+        {
+            if (PresetUseCurrentRoomCheck != null) PresetUseCurrentRoomCheck.IsChecked = false;
+            if (PresetRoomIdBox != null) PresetRoomIdBox.IsReadOnly = false;
+        }
+        else if (inRoom && PresetUseCurrentRoomCheck?.IsChecked == true && PresetRoomIdBox != null)
+        {
+            _presetAttachUiSyncing = true;
+            try
+            {
+                PresetRoomIdBox.Text = _boundRoomId;
+                PresetRoomIdBox.IsReadOnly = true;
+            }
+            finally { _presetAttachUiSyncing = false; }
+        }
+        else if (PresetRoomIdBox != null)
+        {
+            PresetRoomIdBox.IsReadOnly = false;
+        }
+        UpdatePresetNamePlaceholder();
+    }
+
+    private void PresetAttachRoomCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_presetAttachUiSyncing) return;
+        RefreshPresetAttachUi();
+    }
+
+    private void PresetUseCurrentRoomCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_presetAttachUiSyncing) return;
+        RefreshPresetAttachUi();
+    }
+
+    private void PresetRoomIdBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (PresetRoomIdPlaceholder != null)
+            PresetRoomIdPlaceholder.Visibility = string.IsNullOrEmpty(PresetRoomIdBox?.Text)
+                ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void PresetLineCheck_Changed(object sender, RoutedEventArgs e) =>
@@ -311,6 +426,13 @@ public partial class MainWindow
         if (PresetManagerList?.SelectedItem is PresetLineVm row && PresetNameEditBox != null)
             PresetNameEditBox.Text = row.Name;
         UpdatePresetNamePlaceholder();
+        LoadPresetAttachUiFromSelection();
+    }
+
+    private void PresetNameEditBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter || e.Key == Key.Return)
+            e.Handled = true;
     }
 
     private void PresetMoveUp_Preview(object sender, MouseButtonEventArgs e)
@@ -348,6 +470,7 @@ public partial class MainWindow
     private void PresetAdd_Click(object sender, RoutedEventArgs e)
     {
         string name = (PresetNameEditBox?.Text ?? "").Trim();
+        if (name.Length > 21) name = name[..21].Trim();
         if (string.IsNullOrEmpty(name))
         {
             ShowPresetError("Missing name", "Enter a name for the new preset.", overwrite: false);
@@ -358,8 +481,9 @@ public partial class MainWindow
             ShowPresetError("Preset exists", $"A preset named '{name}' already exists.", overwrite: false);
             return;
         }
+        string roomId = ReadPresetRoomIdFromUi();
         string id = "p" + Guid.NewGuid().ToString("N")[..10];
-        _presets.Add(new AppDatabase.PresetInfo { Id = id, Name = name, SortOrder = _presets.Count });
+        _presets.Add(new AppDatabase.PresetInfo { Id = id, Name = name, SortOrder = _presets.Count, RoomId = roomId });
         PersistPresetOrder();
         AppDatabase.SavePresetPack(id, new AppDatabase.PresetPack());
         SeedWelcomeLanguageIfEmpty(id);
@@ -373,6 +497,7 @@ public partial class MainWindow
         if (PresetNameEditBox != null) PresetNameEditBox.Text = "";
         RefreshPresetManagerList();
         PopulatePresetCombo();
+        ResetPresetAttachUi();
         AppendLog("Preset added: " + name, LogCategory.Info);
     }
 
@@ -380,6 +505,7 @@ public partial class MainWindow
     {
         if (PresetManagerList?.SelectedItem is not PresetLineVm row) return;
         string name = (PresetNameEditBox?.Text ?? "").Trim();
+        if (name.Length > 21) name = name[..21].Trim();
         if (string.IsNullOrEmpty(name))
         {
             ShowPresetError("Missing name", "Enter a preset name.", overwrite: false);
@@ -395,10 +521,12 @@ public partial class MainWindow
         var info = _presets.FirstOrDefault(p => string.Equals(p.Id, row.Id, StringComparison.OrdinalIgnoreCase));
         if (info == null) return;
         info.Name = name;
+        info.RoomId = ReadPresetRoomIdFromUi();
         PersistPresetOrder();
         RefreshPresetManagerList();
         PopulatePresetCombo();
-        AppendLog("Preset renamed: " + name, LogCategory.Info);
+        LoadPresetAttachUiFromSelection();
+        AppendLog("Preset updated: " + name, LogCategory.Info);
     }
 
     private void PresetDelete_Click(object sender, RoutedEventArgs e)
@@ -409,7 +537,30 @@ public partial class MainWindow
             ShowPresetError("Cannot delete", "At least one preset must remain.", overwrite: false);
             return;
         }
-        string id = row.Id;
+        _pendingPresetDeleteId = row.Id;
+        _pendingPresetDeleteName = row.Name;
+        ShowPresetError(
+            "Delete preset?",
+            $"Delete '{row.Name}'?\nThis cannot be undone.",
+            overwrite: true);
+        if (PresetErrorOverwriteBtn != null)
+            PresetErrorOverwriteBtn.Content = "Delete";
+        if (PresetErrorCloseBtn != null)
+            PresetErrorCloseBtn.Content = "CANCEL";
+    }
+
+    private bool ConfirmPendingPresetDelete()
+    {
+        string? id = _pendingPresetDeleteId;
+        string? name = _pendingPresetDeleteName;
+        _pendingPresetDeleteId = null;
+        _pendingPresetDeleteName = null;
+        if (string.IsNullOrEmpty(id)) return false;
+        if (_presets.Count <= 1)
+        {
+            ShowPresetError("Cannot delete", "At least one preset must remain.", overwrite: false);
+            return false;
+        }
         if (string.Equals(id, _currentLanguage, StringComparison.OrdinalIgnoreCase))
         {
             var next = _presets.First(p => !string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
@@ -420,9 +571,11 @@ public partial class MainWindow
         PersistPresetOrder();
         DropPresetFromMemory(id);
         if (PresetNameEditBox != null) PresetNameEditBox.Text = "";
+        ResetPresetAttachUi();
         RefreshPresetManagerList();
         PopulatePresetCombo();
-        AppendLog("Preset deleted: " + row.Name, LogCategory.Info);
+        AppendLog("Preset deleted: " + (name ?? id), LogCategory.Info);
+        return true;
     }
 
     private void DropPresetFromMemory(string id)
@@ -520,7 +673,13 @@ public partial class MainWindow
                 continue;
             }
             string id = "p" + Guid.NewGuid().ToString("N")[..10];
-            _presets.Add(new AppDatabase.PresetInfo { Id = id, Name = name, SortOrder = _presets.Count });
+            _presets.Add(new AppDatabase.PresetInfo
+            {
+                Id = id,
+                Name = name,
+                SortOrder = _presets.Count,
+                RoomId = NormalizePresetRoomId(bundle.RoomId)
+            });
             WritePresetBundle(id, bundle);
         }
         PersistPresetOrder();
@@ -560,7 +719,9 @@ public partial class MainWindow
             RecorderTrigger = pack.RecorderTrigger,
             ConfirmReceipt = pack.ConfirmReceipt,
             Answering = _receiptByLang.TryGetValue(id, out var an) ? an.ToList() : new List<string>(),
-            ActiveCategory = _activeCategoryByLang.TryGetValue(id, out var ac) ? ac : "General"
+            ActiveCategory = _activeCategoryByLang.TryGetValue(id, out var ac) ? ac : "General",
+            RoomId = NormalizePresetRoomId(_presets.FirstOrDefault(p =>
+                string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase))?.RoomId)
         };
         foreach (var catKv in _commandCategories)
         {
@@ -583,6 +744,9 @@ public partial class MainWindow
 
     private void WritePresetBundle(string id, PresetBundleDto bundle)
     {
+        var info = _presets.FirstOrDefault(p => string.Equals(p.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (info != null && bundle.RoomId != null)
+            info.RoomId = NormalizePresetRoomId(bundle.RoomId);
         AppDatabase.SavePresetPack(id, new AppDatabase.PresetPack
         {
             Welcome1Enabled = bundle.Welcome1Enabled,
@@ -638,6 +802,8 @@ public partial class MainWindow
 
     private void ShowPresetError(string title, string message, bool overwrite, bool success = false)
     {
+        if (PresetErrorCloseBtn != null)
+            PresetErrorCloseBtn.Content = "CLOSE";
         if (PresetErrorTitle != null)
         {
             PresetErrorTitle.Text = title;
@@ -653,14 +819,27 @@ public partial class MainWindow
     private void PresetErrorClose_Click(object sender, RoutedEventArgs e)
     {
         _pendingPresetImport = null;
+        _pendingPresetDeleteId = null;
+        _pendingPresetDeleteName = null;
         if (PresetErrorOverwriteBtn != null)
+        {
             PresetErrorOverwriteBtn.Visibility = Visibility.Collapsed;
+            PresetErrorOverwriteBtn.Content = "Overwrite";
+        }
+        if (PresetErrorCloseBtn != null)
+            PresetErrorCloseBtn.Content = "CLOSE";
         if (PresetErrorOverlay != null)
             PresetErrorOverlay.Visibility = Visibility.Collapsed;
     }
 
     private void PresetErrorOverwrite_Click(object sender, RoutedEventArgs e)
     {
+        if (!string.IsNullOrEmpty(_pendingPresetDeleteId))
+        {
+            if (ConfirmPendingPresetDelete())
+                PresetErrorClose_Click(sender, e);
+            return;
+        }
         var pending = _pendingPresetImport;
         PresetErrorClose_Click(sender, e);
         if (pending != null)

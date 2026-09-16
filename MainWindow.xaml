@@ -1579,7 +1579,7 @@
                       <ComboBox x:Name="RecorderReplyModeCombo" Grid.Column="1" Height="26" MinWidth="132" Margin="10,0,0,0" VerticalAlignment="Center" SelectionChanged="RoomUserMessageMode_Changed">
                         <ComboBoxItem Content="Public" Tag="public" />
                         <ComboBoxItem Content="Whisper" Tag="whisper" />
-                        <ComboBoxItem Content="Direct (DM)" Tag="dm" Foreground="#6A6A88" />
+                        <ComboBoxItem Content="Direct (DM)" Tag="dm" />
                       </ComboBox>
                     </Grid>
                     <Grid Margin="0,0,0,4">
@@ -1632,15 +1632,13 @@
                   <StackPanel>
                     <TextBlock Text="Edit Console Messages" FontSize="14" FontWeight="SemiBold" Foreground="#E8E8FF" Margin="0,0,0,10" />
                     <Grid Height="28" Margin="0,0,0,6">
-                      <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                      </Grid.ColumnDefinitions>
-                      <TextBlock Text="Delivery Method:" Foreground="#A0A0C8" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0" />
-                      <ComboBox x:Name="DmEditDeliveryCombo" Grid.Column="1" Height="26" MinWidth="120" MaxWidth="160" HorizontalAlignment="Left" VerticalAlignment="Center">
-                        <ComboBoxItem Content="Public" Tag="public" IsSelected="True" />
-                        <ComboBoxItem Content="Whisper" Tag="whisper" />
-                      </ComboBox>
+                      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <TextBlock Text="Delivery Method:" Foreground="#A0A0C8" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <ComboBox x:Name="DmEditDeliveryCombo" Height="26" MinWidth="120" MaxWidth="160" VerticalAlignment="Center">
+                          <ComboBoxItem Content="Public" Tag="public" IsSelected="True" />
+                          <ComboBoxItem Content="Whisper" Tag="whisper" />
+                        </ComboBox>
+                      </StackPanel>
                     </Grid>
                     <Border CornerRadius="6" Background="#0F0F1C" BorderBrush="#3A3A58" BorderThickness="1" ClipToBounds="True" Margin="0,0,0,6">
                       <ListBox x:Name="DmEditList" Height="92" ItemContainerStyle="{StaticResource ExpandableMessageListItem}" Background="#00FFFFFF" BorderThickness="0" Foreground="#C0C0E0" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" SelectionChanged="DmEditList_SelectionChanged" PreviewMouseWheel="MessageList_PreviewMouseWheel" />
@@ -1678,7 +1676,7 @@
                       <ComboBox x:Name="RoomUserMessageModeCombo" Grid.Column="1" Height="26" MinWidth="132" Margin="10,0,0,0" VerticalAlignment="Center" SelectionChanged="RoomUserMessageMode_Changed">
                         <ComboBoxItem Content="Public" Tag="public" IsSelected="True" />
                         <ComboBoxItem Content="Whisper" Tag="whisper" />
-                        <ComboBoxItem Content="Direct (DM)" Tag="dm" Foreground="#6A6A88"/>
+                        <ComboBoxItem Content="Direct (DM)" Tag="dm" />
                       </ComboBox>
                     </Grid>
                     <Grid x:Name="RoomUserMessageComposePanel" Margin="0,0,0,4">
@@ -1760,27 +1758,44 @@
           </Grid.ColumnDefinitions>
         <Border Grid.Column="1" Background="#252540" BorderBrush="#404060" BorderThickness="1" CornerRadius="14" Padding="16" Margin="0,12" VerticalAlignment="Center" HorizontalAlignment="Stretch" MaxHeight="600">
           <DockPanel LastChildFill="True">
-            <Button DockPanel.Dock="Bottom" Content="Done" Height="28" Width="90" HorizontalAlignment="Right" Margin="0,10,0,0" Style="{StaticResource Win11Button}" Click="PresetManagerDone_Click" />
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+              <Button Content="Add Preset" Height="28" MinWidth="100" Padding="12,0" Margin="0,0,8,0" Style="{StaticResource Win11Button}" Click="PresetAdd_Click" />
+              <Button Content="Close" Height="28" Width="90" Style="{StaticResource Win11Button}" Click="PresetManagerDone_Click" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+              <CheckBox x:Name="PresetAttachRoomCheck" Style="{StaticResource CompanionCheckBox}" Content="Attach This Preset to a Room" VerticalAlignment="Center" Checked="PresetAttachRoomCheck_Changed" Unchecked="PresetAttachRoomCheck_Changed" />
+              <Grid x:Name="PresetRoomIdRow" Visibility="Collapsed" Margin="0,6,0,0">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <CheckBox x:Name="PresetUseCurrentRoomCheck" Style="{StaticResource CompanionCheckBox}" Content="Use Current Room" Margin="0,0,10,0" VerticalAlignment="Center" Visibility="Collapsed" Checked="PresetUseCurrentRoomCheck_Changed" Unchecked="PresetUseCurrentRoomCheck_Changed" />
+                <Grid Grid.Column="1">
+                  <TextBox x:Name="PresetRoomIdBox" Height="28" MinHeight="28" MaxHeight="28" MaxLength="40" AcceptsReturn="False" TextWrapping="NoWrap" Padding="6,0,8,0" Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58" VerticalContentAlignment="Center" TextChanged="PresetRoomIdBox_TextChanged" />
+                  <TextBlock x:Name="PresetRoomIdPlaceholder" Text="room-#####" Foreground="#606080" FontSize="12" IsHitTestVisible="False" VerticalAlignment="Center" Margin="8,0,0,0" />
+                </Grid>
+              </Grid>
+            </StackPanel>
             <Grid DockPanel.Dock="Bottom" Margin="0,8,0,0">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
               </Grid.ColumnDefinitions>
-              <Grid Column="0" Margin="0,0,6,0" VerticalAlignment="Top">
-                <TextBox x:Name="PresetNameEditBox" Style="{StaticResource GrowingReplyTextBox}" Padding="3,0,26,0" Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58" PreviewMouseWheel="NestedControl_PreviewMouseWheel" TextChanged="MessageEditBox_TextChanged" />
+              <Grid Column="0" Margin="0,0,6,0" VerticalAlignment="Center">
+                <TextBox x:Name="PresetNameEditBox" Height="28" MinHeight="28" MaxHeight="28" MaxLength="21" AcceptsReturn="False" TextWrapping="NoWrap" Padding="3,0,22,0" Background="#0F0F1C" Foreground="#E0E0FF" BorderBrush="#3A3A58" VerticalContentAlignment="Center" PreviewMouseWheel="NestedControl_PreviewMouseWheel" PreviewKeyDown="PresetNameEditBox_PreviewKeyDown" TextChanged="MessageEditBox_TextChanged" />
                 <TextBlock x:Name="PresetNamePlaceholder" Text="Preset name" Foreground="#606080" FontSize="12" IsHitTestVisible="False" VerticalAlignment="Center" Margin="6,0,0,0" />
-                <Button x:Name="PresetNameClearBtn" Style="{StaticResource IconSquareButton}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,3,3,0" Panel.ZIndex="1" Visibility="Collapsed" ToolTip="Clear" Click="MessageEditClear_Click">
+                <Button x:Name="PresetNameClearBtn" Style="{StaticResource IconSquareButton}" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,2,0" Panel.ZIndex="1" Visibility="Collapsed" ToolTip="Clear" Click="MessageEditClear_Click">
                   <Path Data="M1,1 L9,9 M9,1 L1,9" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Width="10" Height="10" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                 </Button>
               </Grid>
-              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Bottom">
-                <Button Content="Add" Style="{StaticResource Win11Button}" Margin="0,0,4,0" Click="PresetAdd_Click" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                 <Button Content="Update" Style="{StaticResource Win11Button}" Margin="0,0,4,0" Click="PresetUpdate_Click" />
                 <Button Content="Delete" Style="{StaticResource Win11DangerButton}" Click="PresetDelete_Click" />
               </StackPanel>
             </Grid>
             <StackPanel>
-              <TextBlock Text="Presets Manager:" FontSize="14" FontWeight="SemiBold" Foreground="#E8E8FF" Margin="0,0,0,8" />
+              <TextBlock Text="Presets Manager:" FontSize="14" FontWeight="SemiBold" Foreground="#E8E8FF" Margin="0,0,0,4" />
+              <TextBlock Style="{StaticResource SectionTip}" Text="Create and manage complete Room/Message Presets." Margin="0,0,0,8" />
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,8">
                 <Button x:Name="PresetExportBtn" Content="Export" Style="{StaticResource Win11Button}" Height="28" Padding="10,4" FontSize="11" Margin="0,0,6,0" Opacity="0.45" IsEnabled="False" Click="PresetExport_Click" />
                 <Button x:Name="PresetImportBtn" Content="Import" Style="{StaticResource Win11Button}" Height="28" Padding="10,4" FontSize="11" Click="PresetImport_Click" />
@@ -1791,16 +1806,17 @@
                     <DataTemplate>
                       <Grid>
                         <Grid.ColumnDefinitions>
-                          <ColumnDefinition Width="28" />
+                          <ColumnDefinition Width="24" />
                           <ColumnDefinition Width="22" />
-                          <ColumnDefinition Width="*" />
+                          <ColumnDefinition Width="*" MinWidth="88" />
+                          <ColumnDefinition Width="148" />
                           <ColumnDefinition Width="52" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Foreground="#8080A8" FontSize="12" VerticalAlignment="Top" Margin="6,6,0,5" Text="{Binding Number}" />
-                        <CheckBox Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" IsChecked="{Binding IsChecked, Mode=TwoWay}" Checked="PresetLineCheck_Changed" Unchecked="PresetLineCheck_Changed">
+                        <TextBlock Foreground="#8080A8" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,4,0" Text="{Binding Number}" />
+                        <CheckBox Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0" IsChecked="{Binding IsChecked, Mode=TwoWay}" Checked="PresetLineCheck_Changed" Unchecked="PresetLineCheck_Changed">
                           <CheckBox.Style>
                             <Style TargetType="{x:Type CheckBox}" BasedOn="{StaticResource CompanionCheckBox}">
-                              <Setter Property="Visibility" Value="Collapsed" />
+                              <Setter Property="Visibility" Value="Hidden" />
                               <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsChecked}" Value="True">
                                   <Setter Property="Visibility" Value="Visible" />
@@ -1812,8 +1828,9 @@
                             </Style>
                           </CheckBox.Style>
                         </CheckBox>
-                        <TextBlock Grid.Column="2" Foreground="#C0C0E0" FontSize="12" VerticalAlignment="Top" Margin="4,6,6,5" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
-                        <StackPanel Grid.Column="3" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,3,4,0">
+                        <TextBlock Grid.Column="2" Foreground="#C0C0E0" FontSize="12" VerticalAlignment="Center" Margin="4,0,4,0" Text="{Binding Name}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Grid.Column="3" Foreground="#8080A8" FontSize="11" VerticalAlignment="Center" Margin="4,0,4,0" Text="{Binding RoomLabel}" TextTrimming="CharacterEllipsis" />
+                        <StackPanel Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,2,0">
                           <Button Style="{StaticResource IconSquareButton}" ToolTip="Move up" IsEnabled="{Binding CanMoveUp}" Tag="{Binding}" PreviewMouseLeftButtonDown="PresetMoveUp_Preview">
                             <Path Data="M0,0 L5,5 L0,10" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Width="7" Height="10" Stretch="Uniform" RenderTransformOrigin="0.5,0.5" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}">
                               <UIElement.RenderTransform>
@@ -1846,7 +1863,7 @@
             <TextBlock x:Name="PresetErrorMessage" FontSize="13" Foreground="#E0E0FF" TextWrapping="Wrap" TextAlignment="Center" Margin="0,0,0,16" LineHeight="20" />
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
               <Button x:Name="PresetErrorOverwriteBtn" Content="Overwrite" Height="32" MinWidth="100" Padding="12,0" Margin="0,0,8,0" Style="{StaticResource Win11DangerButton}" Visibility="Collapsed" Click="PresetErrorOverwrite_Click" />
-              <Button Content="CLOSE" Width="100" Height="32" Style="{StaticResource Win11Button}" Click="PresetErrorClose_Click" />
+              <Button x:Name="PresetErrorCloseBtn" Content="CLOSE" Width="100" Height="32" Style="{StaticResource Win11Button}" Click="PresetErrorClose_Click" />
             </StackPanel>
           </StackPanel>
         </Border>
@@ -1867,6 +1884,20 @@
         <TextBlock x:Name="AliveText" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center"
                    TextAlignment="Center" Margin="0" Padding="0" TextWrapping="NoWrap"/>
       </Grid>
+      <Border x:Name="MultiRoomOverlay" Grid.Row="1" Grid.RowSpan="4" Visibility="Collapsed"
+              Background="#CC12121F" Panel.ZIndex="200">
+        <Border Background="#252540" CornerRadius="12" Padding="22,20" BorderBrush="#404060" BorderThickness="1"
+                HorizontalAlignment="Center" VerticalAlignment="Center" MinWidth="280" MaxWidth="360">
+          <StackPanel>
+            <TextBlock Text="Room Minimized" FontSize="15" FontWeight="SemiBold"
+                       Foreground="#F87171" TextAlignment="Center" HorizontalAlignment="Center" Margin="0,0,0,10" />
+            <TextBlock Text="operation will resume" FontSize="13" Foreground="#E0E0FF"
+                       TextAlignment="Center" HorizontalAlignment="Center" />
+            <TextBlock Text="with active room restored" FontSize="13" Foreground="#E0E0FF"
+                       TextAlignment="Center" HorizontalAlignment="Center" Margin="0,4,0,0" />
+          </StackPanel>
+        </Border>
+      </Border>
     </Grid>
   </Grid>
 </Window>

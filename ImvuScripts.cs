@@ -22,6 +22,7 @@ internal static class ImvuScripts
     private static readonly Lazy<string> CollectJoinUidsLazy = new(() => Load("collect-join-uids.js"));
     private static readonly Lazy<string> KickUserLazy = new(() => Load("kick-user.js"));
     private static readonly Lazy<string> RemoveUserTraceLazy = new(() => Load("remove-user-trace.js"));
+    private static readonly Lazy<string> OpenNativeDmLazy = new(() => Load("open-native-dm.js"));
 
     public static string FindChatRoot => FindChatRootLazy.Value;
     public static string ExitWhisperMode => ExitWhisperModeLazy.Value;
@@ -32,6 +33,9 @@ internal static class ImvuScripts
     public static string CollectJoinUids => CollectJoinUidsLazy.Value;
     public static string KickUser => KickUserLazy.Value;
     public static string RemoveUserTrace => RemoveUserTraceLazy.Value;
+    public static string OpenNativeDm => OpenNativeDmLazy.Value;
+
+    public static string OpenNativeDmFull => OpenNativeDm;
 
     /// <summary>Find-chat-root + whisper helpers + Remove User (not Kick).</summary>
     public static string KickUserFull => FindChatRoot + ProactiveWhisper + KickUser;

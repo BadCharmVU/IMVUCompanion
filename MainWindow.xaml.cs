@@ -180,6 +180,8 @@ public partial class MainWindow : Window
             this.Show(); this.Activate();
 
             LogBox.Document = new FlowDocument { PagePadding = new Thickness(4) };
+            LogBox.SizeChanged += (_, _) => EnsureLogDocWrap();
+            EnsureLogDocWrap();
 
             _aliveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _aliveTimer.Tick += (s, args) =>
@@ -260,6 +262,48 @@ public partial class MainWindow : Window
 
     private void AppendActivityLog(string msg, LogCategory cat) => AppendLog(msg, cat, toActivityLog: true);
 
+    private void EnsureLogDocWrap()
+    {
+        try
+        {
+            if (LogBox?.Document == null) return;
+            double w = LogBox.ActualWidth - 16;
+            if (w > 60)
+                LogBox.Document.PageWidth = w;
+        }
+        catch { }
+    }
+
+    private void AppendRoomEventLine(string verb, string roomId, string? roomName)
+    {
+        try
+        {
+            void writeUi()
+            {
+                if (LogBox.Document == null)
+                    LogBox.Document = new FlowDocument { PagePadding = new Thickness(4) };
+                EnsureLogDocWrap();
+                var para = new Paragraph { Margin = new Thickness(0), LineHeight = 16 };
+                para.Inlines.Add(new Run("[Event] " + verb + " " + roomId)
+                {
+                    Foreground = BrushForCategory(LogCategory.Info)
+                });
+                if (!string.IsNullOrWhiteSpace(roomName))
+                {
+                    para.Inlines.Add(new Run(" | ") { Foreground = BrushForCategory(LogCategory.Info) });
+                    para.Inlines.Add(new Run(roomName.Trim()) { Foreground = RoomNameLogBrush });
+                }
+                LogBox.Document.Blocks.Add(para);
+                while (LogBox.Document.Blocks.Count > 400)
+                    LogBox.Document.Blocks.Remove(LogBox.Document.Blocks.FirstBlock);
+                LogBox.ScrollToEnd();
+            }
+            if (Dispatcher.CheckAccess()) writeUi();
+            else Dispatcher.BeginInvoke(writeUi);
+        }
+        catch { }
+    }
+
     private void LogJoinSkipped(string name, int count) =>
         AppendActivityLog($"[Skipped] {name} Joined again | {count}", LogCategory.Skipped);
 
@@ -275,7 +319,8 @@ public partial class MainWindow : Window
                 void writeUi()
                 {
                     if (LogBox.Document == null) LogBox.Document = new FlowDocument { PagePadding = new Thickness(4) };
-                    var para = new Paragraph(new Run(msg) { Foreground = BrushForCategory(cat) }) { Margin = new Thickness(0), LineHeight = 14 };
+                    EnsureLogDocWrap();
+                    var para = new Paragraph(new Run(msg) { Foreground = BrushForCategory(cat) }) { Margin = new Thickness(0), LineHeight = 16 };
                     LogBox.Document.Blocks.Add(para);
                     while (LogBox.Document.Blocks.Count > 400) LogBox.Document.Blocks.Remove(LogBox.Document.Blocks.FirstBlock);
                     LogBox.ScrollToEnd();
@@ -310,7 +355,7 @@ public partial class MainWindow : Window
     {
         void setUi()
         {
-            if (BotToggleBtn != null) BotToggleBtn.IsEnabled = !busy;
+            if (BotToggleBtn != null) BotToggleBtn.IsEnabled = !busy && !_multiRoomBlocked;
             if (BotPauseBtn != null) BotPauseBtn.IsEnabled = !busy && _botRunning;
             if (status != null) UpdateStatusText(status);
         }
@@ -323,24 +368,25 @@ public partial class MainWindow : Window
     {
         if (!_botRunning)
         {
+            if (_multiRoomBlocked) return;
             await StartBot();
             return;
         }
 
-        // Running + user-paused → Resume
-        if (_botUserPaused)
+        // Manual pause, or left-room pause: main button is Resume
+        if (_botUserPaused || (_botPausedNoRoom && !_pausedForMinimize))
         {
             await ResumeBotFromUserPauseAsync();
             return;
         }
 
-        // Running and active → Stop
+        // Running (including minimized auto-pause) → Stop
         StopBot();
     }
 
     private async void BotPauseBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (!_botRunning || _botUserPaused) return;
+        if (!_botRunning || _botUserPaused || _pausedForMinimize || _botPausedNoRoom) return;
         await PauseBotFromUserAsync();
     }
 
@@ -348,13 +394,30 @@ public partial class MainWindow : Window
     {
         try
         {
-            // a) Bot may only start when an active room is present
+            if (_roomMinimized || _multiRoomBlocked)
+            {
+                AppendActivityLog("[Event] Error - Room is minimized.", LogCategory.Error);
+                UpdateStatusText("Restore the room first");
+                return;
+            }
+
+            // a) Bot may only start when a restored room (stream + input) is present
             if (!await IsActiveRoomPresentAsync())
             {
                 AppendActivityLog("[Event] Error - No active room detected.", LogCategory.Error);
                 UpdateStatusText("No room — open a chat room first");
                 return;
             }
+
+            try
+            {
+                var snap = await GetRoomSnapshotAsync();
+                string id = snap.PrimaryId;
+                if (!string.IsNullOrEmpty(id) &&
+                    !id.StartsWith("unknown", StringComparison.OrdinalIgnoreCase))
+                    _boundRoomId = id;
+            }
+            catch { }
 
             SetBusy(true, "Starting…");
             AppendLog("Starting companion on embedded IMVU chat…", LogCategory.Info);
@@ -363,6 +426,7 @@ public partial class MainWindow : Window
             _botRunning = true;
             _botPausedNoRoom = false;
             _botUserPaused = false;
+            _pausedForMinimize = false;
             _seenLines.Clear();
             // Commit the previous run into lifetime, then start a new session.
             FlushLifetimeFromSession();
@@ -403,13 +467,14 @@ public partial class MainWindow : Window
         _botRunning = false;
         _botPausedNoRoom = false;
         _botUserPaused = false;
+        _pausedForMinimize = false;
         _botCts?.Cancel();
         StopChatQueue();
         _ = StopBotCleanupAsync();
         PauseBotSessionTimer();
         FlushLifetimeFromSession();
         UpdateBotChrome();
-        AppendActivityLog("[Event] Stopped", LogCategory.Info);
+        AppendActivityLog("[Event] Companion stopped", LogCategory.Info);
         UpdatePageStatus();
     }
 
@@ -422,14 +487,14 @@ public partial class MainWindow : Window
         // Keep the room observer running so roster + recorder stay live while paused
         try { await SetJoinPollPausedAsync(false); } catch { }
         UpdateBotChrome();
-        AppendActivityLog("[Event] Paused (session kept)", LogCategory.Info);
+        AppendActivityLog("[Event] Companion paused", LogCategory.Info);
         UpdatePageStatus();
     }
 
     /// <summary>User Resume from Pause button / main button.</summary>
     private async Task ResumeBotFromUserPauseAsync()
     {
-        if (!_botRunning || !_botUserPaused) return;
+        if (!_botRunning || !(_botUserPaused || _botPausedNoRoom) || _pausedForMinimize) return;
 
         if (!await IsActiveRoomPresentAsync())
         {
@@ -439,21 +504,20 @@ public partial class MainWindow : Window
 
         _botUserPaused = false;
         _botPausedNoRoom = false;
+        _pausedForMinimize = false;
         ResumeBotSessionTimer();
         try
         {
-            // Observer stays up while in a room (roster + recorder)
-            if (string.IsNullOrEmpty(_observerBoundUrl))
-            {
-                await SetupChatObserver();
-            }
+            _observerBoundUrl = null;
+            await SetupChatObserver();
+            try { await SetJoinPollPausedAsync(false); } catch { }
         }
         catch (Exception ex)
         {
             AppendLog("Resume: " + ex.Message, LogCategory.Warning);
         }
         UpdateBotChrome();
-        AppendActivityLog("[Event] Resumed", LogCategory.Info);
+        AppendActivityLog("[Event] Companion resumed", LogCategory.Info);
         UpdatePageStatus();
     }
 
@@ -465,6 +529,7 @@ public partial class MainWindow : Window
         if (!_botRunning)
         {
             BotToggleBtn.Content = "Start";
+            BotToggleBtn.IsEnabled = !_multiRoomBlocked;
             if (BotPauseBtn != null) BotPauseBtn.Visibility = Visibility.Collapsed;
             UpdateBotGlowTarget(BotToggleBtn, active: false);
             return;
@@ -473,15 +538,21 @@ public partial class MainWindow : Window
         if (BotPauseBtn != null)
             BotPauseBtn.Visibility = Visibility.Visible;
 
-        if (_botUserPaused)
+        if (_pausedForMinimize)
         {
+            // Minimized: Pause glows; Stop stays Stop; restore auto-resumes
+            BotToggleBtn.Content = "Stop";
+            UpdateBotGlowTarget(BotPauseBtn, active: true);
+        }
+        else if (_botUserPaused || _botPausedNoRoom)
+        {
+            // Manual pause or left the room: Resume + glowing Pause
             BotToggleBtn.Content = "Resume";
             UpdateBotGlowTarget(BotPauseBtn, active: true);
         }
         else
         {
             BotToggleBtn.Content = "Stop";
-            // Glow on main Start/Stop while actively running
             UpdateBotGlowTarget(BotToggleBtn, active: true);
         }
     }
@@ -508,19 +579,16 @@ public partial class MainWindow : Window
         if (!_botRunning || _botPausedNoRoom) return;
         _botPausedNoRoom = true;
         _inActiveRoom = false;
+        _roomMinimized = false;
         ClearRoomRoster();
         PauseBotSessionTimer();
         try { await SetJoinPollPausedAsync(true); } catch { }
         try { await TeardownChatObserverWebView(); } catch { }
         _observerBoundUrl = null;
-        // Room leave while user-paused: keep user-pause UI; else show as auto-pause on main chrome
         if (!_botUserPaused)
-        {
-            // Treat like pause for chrome: Resume path via room return; Pause square stays, glow on pause-ish
-            if (BotToggleBtn != null) BotToggleBtn.Content = "Stop";
-            UpdateBotGlowTarget(BotToggleBtn, active: false);
-        }
-        AppendActivityLog("[Event] Paused — left room (timer paused, session kept)", LogCategory.Info);
+            _botUserPaused = true;
+        UpdateBotChrome();
+        AppendActivityLog("[Event] Companion paused", LogCategory.Info);
         UpdatePageStatus();
     }
 

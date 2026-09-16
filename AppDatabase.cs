@@ -71,6 +71,8 @@ internal static class AppDatabase
         public string Name { get; set; } = "";
         public string UserId { get; set; } = "";
         public int ReceiptIndex { get; set; }
+        /// <summary>Local time of the first recorded message in the current reply cycle.</summary>
+        public string CycleStarted { get; set; } = "";
         public List<RecorderMessageData> Messages { get; set; } = new();
     }
 
@@ -88,6 +90,7 @@ internal static class AppDatabase
         public string Id { get; set; } = "";
         public string Name { get; set; } = "";
         public int SortOrder { get; set; }
+        public string RoomId { get; set; } = "";
     }
 
     public sealed class PresetPack
@@ -163,6 +166,8 @@ internal static class AppDatabase
             }
             CreateSchema();
             EnsureColumn("recorder_settings", "enabled", "enabled INTEGER NOT NULL DEFAULT 0");
+            EnsureColumn("presets", "room_id", "room_id TEXT NOT NULL DEFAULT ''");
+            EnsureColumn("recorder_users", "cycle_started", "cycle_started TEXT NOT NULL DEFAULT ''");
             EnsurePresets();
             if (!IsFlag("initialized"))
             {
@@ -429,7 +434,7 @@ internal static class AppDatabase
             }
 
             var usersById = new Dictionary<long, RecorderUserData>();
-            using (var cmd = Cmd("SELECT id, name, user_id, receipt_index FROM recorder_users ORDER BY sort_order, id"))
+            using (var cmd = Cmd("SELECT id, name, user_id, receipt_index, cycle_started FROM recorder_users ORDER BY sort_order, id"))
             using (var r = cmd.ExecuteReader())
             {
                 while (r.Read())
@@ -438,7 +443,8 @@ internal static class AppDatabase
                     {
                         Name = r.GetString(1),
                         UserId = r.IsDBNull(2) ? "" : r.GetString(2),
-                        ReceiptIndex = r.IsDBNull(3) ? 0 : r.GetInt32(3)
+                        ReceiptIndex = r.IsDBNull(3) ? 0 : r.GetInt32(3),
+                        CycleStarted = r.FieldCount > 4 && !r.IsDBNull(4) ? r.GetString(4) ?? "" : ""
                     };
                     usersById[r.GetInt64(0)] = user;
                     data.Users.Add(user);
@@ -483,11 +489,12 @@ internal static class AppDatabase
                     continue;
                 long id;
                 using (var cmd = CmdTx(tx,
-                    "INSERT INTO recorder_users (name, user_id, receipt_index, sort_order) VALUES (@n, @u, @r, @o)"))
+                    "INSERT INTO recorder_users (name, user_id, receipt_index, cycle_started, sort_order) VALUES (@n, @u, @r, @c, @o)"))
                 {
                     cmd.Parameters.AddWithValue("@n", user.Name.Trim());
                     cmd.Parameters.AddWithValue("@u", user.UserId ?? "");
                     cmd.Parameters.AddWithValue("@r", Math.Max(0, user.ReceiptIndex));
+                    cmd.Parameters.AddWithValue("@c", user.CycleStarted ?? "");
                     cmd.Parameters.AddWithValue("@o", uOrder++);
                     cmd.ExecuteNonQuery();
                     id = LastInsertId(tx);
@@ -1522,7 +1529,7 @@ internal static class AppDatabase
         lock (Gate)
         {
             var list = new List<PresetInfo>();
-            using var cmd = Cmd("SELECT id, name, sort_order FROM presets ORDER BY sort_order, name");
+            using var cmd = Cmd("SELECT id, name, sort_order, room_id FROM presets ORDER BY sort_order, name");
             using var r = cmd.ExecuteReader();
             while (r.Read())
             {
@@ -1530,7 +1537,8 @@ internal static class AppDatabase
                 {
                     Id = r.GetString(0),
                     Name = r.GetString(1),
-                    SortOrder = r.GetInt32(2)
+                    SortOrder = r.GetInt32(2),
+                    RoomId = r.FieldCount > 3 && !r.IsDBNull(3) ? r.GetString(3) ?? "" : ""
                 });
             }
             return list;
@@ -1548,8 +1556,9 @@ internal static class AppDatabase
             {
                 if (p == null || string.IsNullOrWhiteSpace(p.Id) || string.IsNullOrWhiteSpace(p.Name))
                     continue;
-                ExecTx(tx, "INSERT INTO presets (id, name, sort_order) VALUES (@i, @n, @o)",
-                    ("@i", p.Id.Trim()), ("@n", p.Name.Trim()), ("@o", i++));
+                ExecTx(tx, "INSERT INTO presets (id, name, sort_order, room_id) VALUES (@i, @n, @o, @r)",
+                    ("@i", p.Id.Trim()), ("@n", p.Name.Trim()), ("@o", i++),
+                    ("@r", (p.RoomId ?? "").Trim()));
             }
             tx.Commit();
         }

@@ -9,6 +9,11 @@
     } catch (e) { return; }
 
     function capture(name, value) {
+      try {
+        w.__imvuServices = w.__imvuServices || {};
+        if (typeof name === 'string' && name && value)
+          w.__imvuServices[name] = value;
+      } catch (e) {}
       if (name !== 'activeChat' || !value) return;
       try { w.__imvuCompanionActiveChat = value; } catch (e) {}
       try { if (w.top) w.top.__imvuCompanionActiveChat = value; } catch (e) {}

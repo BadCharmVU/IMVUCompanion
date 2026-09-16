@@ -31,6 +31,7 @@ public sealed class RecorderUserVm
     public string Name { get; set; } = "";
     public string UserId { get; set; } = "";
     public int ReceiptIndex { get; set; }
+    public DateTime CycleStartedAt { get; set; }
     public ObservableCollection<RecorderMessageVm> Messages { get; } = new();
 }
 
@@ -68,6 +69,14 @@ public partial class MainWindow
     private static readonly SolidColorBrush RecorderHeaderIdFg = CreateFrozenBrush(0x70, 0x70, 0x90);
 
     private bool _inActiveRoom;
+    private string _boundRoomId = "";
+    private string _seenRoomId = "";
+    private string _roomTitle = "";
+    private bool _roomMinimized;
+    private bool _multiRoomBlocked;
+    private bool _pausedForMinimize;
+    private int _roomAbsentStreak;
+    private static readonly SolidColorBrush RoomNameLogBrush = CreateFrozenBrush(0xFF, 0xC8, 0x7A);
     private bool _recorderEnabled;
     private bool _recorderReady;
     private bool _dmReady;
@@ -277,7 +286,8 @@ public partial class MainWindow
                 {
                     Name = row.Name.Trim(),
                     UserId = (row.UserId ?? "").Trim(),
-                    ReceiptIndex = Math.Max(0, row.ReceiptIndex)
+                    ReceiptIndex = Math.Max(0, row.ReceiptIndex),
+                    CycleStartedAt = ParseRecorderCycleStart(row.CycleStarted)
                 };
                 foreach (var m in row.Messages)
                 {
@@ -336,6 +346,9 @@ public partial class MainWindow
                     Name = u.Name,
                     UserId = u.UserId,
                     ReceiptIndex = u.ReceiptIndex,
+                    CycleStarted = u.CycleStartedAt == default
+                        ? ""
+                        : u.CycleStartedAt.ToString("o"),
                     Messages = u.Messages.Select(m => new AppDatabase.RecorderMessageData
                     {
                         Id = m.Id,
@@ -458,14 +471,47 @@ public partial class MainWindow
             || t.Equals("to me", StringComparison.OrdinalIgnoreCase);
     }
 
+    private static DateTime ParseRecorderCycleStart(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return default;
+        if (DateTime.TryParse(raw, CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind, out var dt))
+            return dt;
+        if (DateTime.TryParse(raw, out dt))
+            return dt;
+        return default;
+    }
+
     private static string FormatRecorderClock(string? raw)
     {
-        string s = (raw ?? "").Trim();
-        if (s.Length >= 5 && s[2] == ':')
-            return s[..5];
-        if (DateTime.TryParse(s, out var dt))
-            return dt.ToString("HH:mm");
-        return DateTime.Now.ToString("HH:mm");
+        if (TryParseRecorderStamp(raw, out var dt))
+            return dt.ToString("MM:dd HH:mm");
+        return DateTime.Now.ToString("MM:dd HH:mm");
+    }
+
+    private static bool TryParseRecorderStamp(string? raw, out DateTime dt)
+    {
+        dt = default;
+        string s = (raw ?? "").Trim().Trim('[', ']');
+        if (string.IsNullOrEmpty(s)) return false;
+        string[] formats =
+        {
+            "MM:dd HH:mm",
+            "MM:dd H:mm",
+            "HH:mm",
+            "H:mm",
+            "o",
+            "yyyy-MM-ddTHH:mm:ss",
+            "yyyy-MM-dd HH:mm:ss"
+        };
+        if (DateTime.TryParseExact(s, formats, CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out dt))
+        {
+            if (s.Length <= 5)
+                dt = DateTime.Today.Add(dt.TimeOfDay);
+            return true;
+        }
+        return DateTime.TryParse(s, out dt);
     }
 
     private void TryRecordChatMessage(string speaker, string msg, bool isWhisper, string? userId = null)
@@ -492,7 +538,8 @@ public partial class MainWindow
 
         string body = triggerHit ? RecorderPayload(msg) : msg.Trim();
         if (IsRecorderChromeLabel(body)) return;
-        string stamp = DateTime.Now.ToString("HH:mm");
+        DateTime now = DateTime.Now;
+        string stamp = now.ToString("MM:dd HH:mm");
 
         RecorderUserVm? user = null;
         if (!string.IsNullOrEmpty(uid) && _recorderByUid.TryGetValue(uid, out user) && user != null)
@@ -522,6 +569,8 @@ public partial class MainWindow
             _recorderUsers.Add(user);
         }
 
+        ResetRecorderCycleIfDue(user, now);
+
         user.Messages.Add(new RecorderMessageVm
         {
             Time = stamp,
@@ -531,6 +580,23 @@ public partial class MainWindow
         SaveRecorderSettings();
         RefreshRecorderUsersUi();
         _ = TrySendReceiptAsync(user, isWhisper);
+    }
+
+    private static void ResetRecorderCycleIfDue(RecorderUserVm user, DateTime now)
+    {
+        if (user.CycleStartedAt == default)
+        {
+            // Migrated users who already used every answering line: treat as expired
+            // so the next recorded message can send reply 1 again.
+            if (user.ReceiptIndex > 0)
+                user.ReceiptIndex = 0;
+            user.CycleStartedAt = now;
+            return;
+        }
+        if (now - user.CycleStartedAt < TimeSpan.FromHours(12))
+            return;
+        user.ReceiptIndex = 0;
+        user.CycleStartedAt = now;
     }
 
     private async Task TrySendReceiptAsync(RecorderUserVm user, bool isWhisper)
@@ -843,7 +909,7 @@ public partial class MainWindow
         double dip = 1.0;
         try { dip = VisualTreeHelper.GetDpi(this).PixelsPerDip; } catch { }
         var ft = new FormattedText(
-            "[44:44]",
+            "[44:44 44:44]",
             CultureInfo.CurrentCulture,
             FlowDirection.LeftToRight,
             new Typeface(SystemFonts.MessageFontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal),
@@ -1508,10 +1574,15 @@ public partial class MainWindow
 
     private void ClearRoomRoster()
     {
+        _rosterSeedGen++;
         _pendingRemoves.Clear();
         _roomEnterCounts.Clear();
         _leftThisRoom.Clear();
-        if (_roomUsers.Count == 0 && _selectedRoomUserKey == null) return;
+        if (_roomUsers.Count == 0 && _selectedRoomUserKey == null)
+        {
+            RefreshRoomUsersUi();
+            return;
+        }
         _roomUsers.Clear();
         _selectedRoomUserKey = null;
         RefreshRoomUsersUi();
@@ -1755,20 +1826,19 @@ public partial class MainWindow
     private void ApplyComposeLock()
     {
         var combo = _composeOnRecorder ? RecorderReplyModeCombo : RoomUserMessageModeCombo;
-        if (combo != null) combo.IsEnabled = !_composeLockedDev;
+        if (combo != null) combo.IsEnabled = true;
         ApplyComposeInputState();
     }
 
     private void ApplyComposeInputState()
     {
-        bool lockInput = _composeLockedDev || SelectedRoomUserMessageMode() == "dm";
         var box = _composeOnRecorder ? RecorderReplyBox : RoomUserMessageBox;
         var placeholder = _composeOnRecorder ? RecorderReplyPlaceholder : RoomUserMessagePlaceholder;
         var clear = _composeOnRecorder ? RecorderReplyClearBtn : RoomUserMessageClearBtn;
-        if (box != null) box.IsEnabled = !lockInput;
+        if (box != null) box.IsEnabled = true;
         if (placeholder != null)
-            placeholder.Visibility = lockInput ? Visibility.Visible : Visibility.Collapsed;
-        if (lockInput && clear != null)
+            placeholder.Visibility = Visibility.Collapsed;
+        if (clear != null && string.IsNullOrEmpty(box?.Text))
             clear.Visibility = Visibility.Collapsed;
     }
 
@@ -1866,7 +1936,7 @@ public partial class MainWindow
         var count = _composeOnRecorder ? RecorderReplyCount : RoomUserMessageCount;
         var send = _composeOnRecorder ? RecorderReplySendBtn : RoomUserMessageSendBtn;
         if (count != null)
-            count.Visibility = mode == "dm" ? Visibility.Visible : Visibility.Hidden;
+            count.Visibility = Visibility.Visible;
         if (send == null) return;
         send.Content = mode switch
         {
@@ -1874,8 +1944,8 @@ public partial class MainWindow
             "dm" => "Send DM",
             _ => "Send Public"
         };
-        send.IsEnabled = mode != "dm" && !_composeLockedDev;
-        send.Opacity = (mode == "dm" || _composeLockedDev) ? 0.45 : 1;
+        send.IsEnabled = true;
+        send.Opacity = 1;
         var pub = TryFindResource("Win11SendPublicButton") as Style;
         var wh = TryFindResource("Win11SendWhisperButton") as Style;
         var normal = TryFindResource("Win11Button") as Style;
@@ -1890,19 +1960,22 @@ public partial class MainWindow
 
     private async void RoomUserMessageSend_Click(object sender, RoutedEventArgs e)
     {
-        if (_chipMessageUser == null || _composeLockedDev) return;
+        if (_chipMessageUser == null)
+        {
+            AppendActivityLog("[Event] Send DM — no user selected", LogCategory.Warning);
+            return;
+        }
         string mode = SelectedRoomUserMessageMode();
-        if (mode == "dm") return;
 
         string body = (_composeOnRecorder ? RecorderReplyBox?.Text : RoomUserMessageBox?.Text) ?? "";
         if (string.IsNullOrWhiteSpace(body))
         {
-            AppendLog("Enter a message first.", LogCategory.Warning);
+            AppendActivityLog("[Event] Enter a message first.", LogCategory.Warning);
             return;
         }
-        if (!await IsActiveRoomPresentAsync())
+        if (mode != "dm" && !await IsActiveRoomPresentAsync())
         {
-            AppendLog("No active room — cannot send.", LogCategory.Warning);
+            AppendActivityLog("[Event] No active room — cannot send.", LogCategory.Warning);
             return;
         }
 
@@ -1915,6 +1988,32 @@ public partial class MainWindow
         else
             sent = _chipMessagePrefix ? PrefixPublicDm(user.Name, body) : body;
         string? result;
+        if (mode == "dm")
+        {
+            AppendActivityLog("[Event] Sending native DM to " + (user.Name ?? user.UserId), LogCategory.DirectDm);
+            try
+            {
+                if (string.IsNullOrWhiteSpace(user.UserId))
+                {
+                    AppendActivityLog("[Event] Native DM failed — no user id", LogCategory.Warning);
+                    return;
+                }
+                result = await SendNativeDmAsync(user.UserId, sent);
+            }
+            catch (Exception ex)
+            {
+                AppendActivityLog("[Event] Native DM error: " + ex.Message, LogCategory.Error);
+                return;
+            }
+            if (result != null && result.StartsWith("ok", StringComparison.Ordinal))
+            {
+                AppendActivityLog("[Sent DM] " + user.Name + " " + sent, LogCategory.DirectDm);
+                CloseRoomUserMessageModal();
+            }
+            else
+                AppendActivityLog("[Event] Native DM: " + (result ?? "no result"), LogCategory.Warning);
+            return;
+        }
         if (mode == "whisper")
         {
             result = await SendToImvuChat(sent, whisperReply: true, whisperSpeaker: user.Name,
@@ -2182,34 +2281,265 @@ public partial class MainWindow
         if ((DateTime.UtcNow - _lastRoomCheckUtc).TotalSeconds < 2) return;
         _lastRoomCheckUtc = DateTime.UtcNow;
 
-        bool room = await IsActiveRoomPresentAsync();
-        if (room && !_inActiveRoom)
+        var snap = await GetRoomSnapshotAsync();
+        bool restored = snap.RestoredOpen;
+        bool miniOnly = !restored && snap.MiniCount > 0;
+        bool gone = !restored && snap.MiniCount == 0;
+
+        if (gone)
         {
-            _inActiveRoom = true;
-            _leftThisRoom.Clear();
-            await EnsureRoomObserverAsync();
-            await RefreshSelfIdentityAsync();
-            _ = ReseedRosterAfterEnterAsync();
+            _roomAbsentStreak++;
+            if ((_inActiveRoom || _roomMinimized) && _roomAbsentStreak < 3)
+                return;
         }
-        else if (!room && _inActiveRoom)
+        else
         {
+            _roomAbsentStreak = 0;
+        }
+
+        _multiRoomBlocked = miniOnly;
+        SetRoomMinimizedOverlay(miniOnly);
+
+        if (restored)
+        {
+            string focusId = FocusRoomId(snap);
+            string name = snap.RoomName ?? "";
+            bool wasMin = _roomMinimized;
+            bool wasIn = _inActiveRoom;
+            bool switched = RoomIdChanged(focusId, wasMin);
+
+            _roomMinimized = false;
+            _inActiveRoom = true;
+
+            if (switched)
+            {
+                LogRoomState("Exited", _boundRoomId, _roomTitle);
+                if (_botRunning || _pausedForMinimize)
+                {
+                    _pausedForMinimize = false;
+                    if (_botRunning) StopBot();
+                }
+                ClearRoomRoster();
+                BindRoom(focusId, name);
+                name = await WaitForRoomNameAsync(name);
+                BindRoom(focusId, name);
+                LogRoomState("Entered", _boundRoomId, _roomTitle);
+                await AttachActiveRoomAsync();
+                TryApplyRoomPreset(_boundRoomId);
+            }
+            else if (!wasIn)
+            {
+                BindRoom(focusId, name);
+                name = await WaitForRoomNameAsync(name);
+                BindRoom(focusId, name);
+                LogRoomState("Entered", _boundRoomId, _roomTitle);
+                ClearRoomRoster();
+                await AttachActiveRoomAsync();
+                TryApplyRoomPreset(_boundRoomId);
+            }
+            else if (wasMin)
+            {
+                BindRoom(focusId, name);
+                name = await WaitForRoomNameAsync(name);
+                BindRoom(focusId, name);
+                ClearRoomRoster();
+                await AttachActiveRoomAsync();
+                TryApplyRoomPreset(_boundRoomId);
+                if (_pausedForMinimize && _botRunning)
+                    await ResumeFromMinimizeAsync();
+            }
+            else
+            {
+                BindRoom(focusId, name);
+            }
+            return;
+        }
+
+        if (miniOnly)
+        {
+            if (!_roomMinimized)
+            {
+                _roomMinimized = true;
+                _inActiveRoom = true;
+                LogRoomState("Minimized", FirstRealRoomId(_boundRoomId, _seenRoomId, FocusRoomId(snap)), _roomTitle);
+                ClearRoomRoster();
+                if (_botRunning)
+                    await PauseForMinimizeAsync();
+            }
+            return;
+        }
+
+        if (_inActiveRoom || _roomMinimized)
+        {
+            string left = FirstRealRoomId(_boundRoomId, _seenRoomId);
+            string leftName = _roomTitle;
             _inActiveRoom = false;
+            _roomMinimized = false;
             PersistOperatorIdentity();
             ClearRoomRoster();
-            if (!_botRunning)
+            LogRoomState("Exited", left, leftName);
+            _boundRoomId = "";
+            _seenRoomId = "";
+            _roomTitle = "";
+            if (_pausedForMinimize && _botRunning)
+            {
+                _pausedForMinimize = false;
+                StopBot();
+            }
+            else if (_botRunning && !_botPausedNoRoom)
+                await PauseBotForMissingRoomAsync();
+            else if (!_botRunning)
             {
                 try { await TeardownChatObserverWebView(); } catch { }
                 _observerBoundUrl = null;
             }
         }
+    }
 
-        if (_botRunning)
+    private string FocusRoomId(RoomSnapshot snap)
+    {
+        if (snap.RestoredOpen)
         {
-            if (!room && !_botPausedNoRoom)
-                await PauseBotForMissingRoomAsync();
-            else if (room && _botPausedNoRoom)
-                await ResumeBotAfterRoomAsync();
+            if (IsRealRoomId(snap.RestoredId)) return snap.RestoredId;
+            if (IsRealRoomId(snap.LastRoomId)) return snap.LastRoomId;
+            if (IsRealRoomId(snap.PrimaryId)) return snap.PrimaryId;
         }
+        if (IsRealRoomId(snap.PrimaryId)) return snap.PrimaryId;
+        if (IsRealRoomId(snap.LastRoomId)) return snap.LastRoomId;
+        return "";
+    }
+
+    private bool RoomIdChanged(string focusId, bool comingFromMinimize)
+    {
+        if (!IsRealRoomId(focusId)) return false;
+        string prev = FirstRealRoomId(_boundRoomId, _seenRoomId);
+        if (!IsRealRoomId(prev)) return false;
+        if (string.Equals(prev, focusId, StringComparison.OrdinalIgnoreCase)) return false;
+        if (comingFromMinimize)
+            return true;
+        return true;
+    }
+
+    private async Task<string> WaitForRoomNameAsync(string current)
+    {
+        if (!IsNavJunkRoomName(current)) return current.Trim();
+        for (int i = 0; i < 5; i++)
+        {
+            try { await Task.Delay(350); }
+            catch { break; }
+            var snap = await GetRoomSnapshotAsync();
+            if (!IsNavJunkRoomName(snap.RoomName))
+                return snap.RoomName.Trim();
+        }
+        return current?.Trim() ?? "";
+    }
+
+    private void TryApplyRoomPreset(string roomId)
+    {
+        string key = NormalizePresetRoomId(roomId);
+        if (key.Length == 0) return;
+        var match = _presets.FirstOrDefault(p =>
+            string.Equals(NormalizePresetRoomId(p.RoomId), key, StringComparison.OrdinalIgnoreCase));
+        if (match == null) return;
+        if (string.Equals(match.Id, _currentLanguage, StringComparison.OrdinalIgnoreCase)) return;
+        SetAppLanguage(match.Id, refreshUi: true);
+        SelectAppLanguageCombo(match.Id);
+        AppendActivityLog("[Event] Preset '" + match.Name + "' for " + key, LogCategory.Info);
+    }
+
+    private void BindRoom(string id, string name)
+    {
+        if (IsRealRoomId(id))
+        {
+            _boundRoomId = id;
+            _seenRoomId = id;
+        }
+        if (!string.IsNullOrWhiteSpace(name) && !IsNavJunkRoomName(name))
+            _roomTitle = name.Trim();
+    }
+
+    private static bool IsNavJunkRoomName(string? name)
+    {
+        string t = (name ?? "").Trim();
+        if (t.Length == 0) return true;
+        return t.Equals("Home", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("Chat", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("Chat Now", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("Hangout", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("Hangouts", StringComparison.OrdinalIgnoreCase)
+            || t.Equals("IMVU", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FirstRealRoomId(params string?[] ids)
+    {
+        foreach (var id in ids)
+            if (IsRealRoomId(id)) return id!;
+        return "";
+    }
+
+    private void LogRoomState(string verb, string? id, string? roomName = null)
+    {
+        string shown = IsRealRoomId(id) ? id! : FirstRealRoomId(_boundRoomId, _seenRoomId);
+        if (string.IsNullOrEmpty(shown)) shown = "room";
+        string name = string.IsNullOrWhiteSpace(roomName) ? _roomTitle : roomName.Trim();
+        if (IsNavJunkRoomName(name)) name = "";
+        AppendRoomEventLine(verb, shown, name);
+    }
+
+    private void SetRoomMinimizedOverlay(bool show)
+    {
+        if (MultiRoomOverlay != null)
+            MultiRoomOverlay.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        UpdateBotChrome();
+        UpdatePageStatus();
+    }
+
+    private async Task AttachActiveRoomAsync()
+    {
+        await EnsureRoomObserverAsync();
+        await RefreshSelfIdentityAsync();
+        _ = ReseedRosterAfterEnterAsync();
+    }
+
+    private async Task PauseForMinimizeAsync()
+    {
+        if (!_botRunning || _pausedForMinimize) return;
+        _pausedForMinimize = true;
+        _botPausedNoRoom = true;
+        PauseBotSessionTimer();
+        try { await SetJoinPollPausedAsync(true); } catch { }
+        try { await TeardownChatObserverWebView(); } catch { }
+        _observerBoundUrl = null;
+        UpdateBotChrome();
+        AppendActivityLog("[Event] Companion paused", LogCategory.Info);
+        UpdatePageStatus();
+    }
+
+    private async Task ResumeFromMinimizeAsync()
+    {
+        if (!_botRunning || !_pausedForMinimize) return;
+        _pausedForMinimize = false;
+        _botPausedNoRoom = false;
+        if (_botUserPaused)
+        {
+            AppendActivityLog("[Event] Room restored — still user-paused (press Resume)", LogCategory.Info);
+            UpdatePageStatus();
+            return;
+        }
+        ResumeBotSessionTimer();
+        try
+        {
+            _observerBoundUrl = null;
+            await SetupChatObserver();
+            try { await SetJoinPollPausedAsync(false); } catch { }
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Resume observer: " + ex.Message, LogCategory.Warning);
+        }
+        UpdateBotChrome();
+        AppendActivityLog("[Event] Companion resumed", LogCategory.Info);
+        UpdatePageStatus();
     }
 
     private async Task EnsureRoomObserverAsync()
@@ -2233,7 +2563,7 @@ public partial class MainWindow
         {
             try { await Task.Delay(delay); }
             catch { return; }
-            if (_isShuttingDown || !_inActiveRoom || gen != _rosterSeedGen) return;
+            if (_isShuttingDown || !_inActiveRoom || _roomMinimized || gen != _rosterSeedGen) return;
             try
             {
                 await RefreshSelfIdentityAsync();

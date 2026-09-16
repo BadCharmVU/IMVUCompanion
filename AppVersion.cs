@@ -70,12 +70,12 @@ internal static class AppVersion
             catch { }
 
             var v = Assembly.GetExecutingAssembly().GetName().Version;
-            return Normalize(v ?? new Version(0, 10, 0));
+            return Normalize(v ?? new Version(1, 0, 0));
         }
     }
 
     /// <summary>
-    /// Pad unspecified Build/Revision to 0 so gist "0.10.0" equals assembly 0.10.0.0.
+    /// Pad unspecified Build/Revision to 0 so gist "1.0.0" equals assembly 1.0.0.0.
     /// </summary>
     public static Version Normalize(Version v) =>
         new(v.Major, v.Minor, Math.Max(v.Build, 0), Math.Max(v.Revision, 0));
@@ -83,7 +83,7 @@ internal static class AppVersion
     public static bool IsNewer(Version? remote, Version? local) =>
         remote != null && (local == null || Normalize(remote) > Normalize(local));
 
-    /// <summary>Always three segments so v0.10.0 is visible, not "v0.10".</summary>
+    /// <summary>Always three segments so v1.0.0 is visible, not "v1.0".</summary>
     public static string FormatLabel(Version? v)
     {
         if (v == null) return "v?";

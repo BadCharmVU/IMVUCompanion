@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,6 +12,94 @@ namespace IMVUCompanion;
 
 public partial class MainWindow
 {
+    private sealed class RoomSnapshot
+    {
+        public bool RestoredOpen { get; set; }
+        public string RestoredId { get; set; } = "";
+        public string LastRoomId { get; set; } = "";
+        public string RoomName { get; set; } = "";
+        public int MiniCount { get; set; }
+        public List<string> Minimized { get; } = new();
+        public List<string> Ids { get; } = new();
+        public int Count => Ids.Count;
+
+        public bool Contains(string? id) =>
+            !string.IsNullOrEmpty(id) &&
+            Ids.Any(x => string.Equals(x, id, StringComparison.OrdinalIgnoreCase));
+
+        public bool IsMinimized(string? id) =>
+            !string.IsNullOrEmpty(id) &&
+            Minimized.Any(x => string.Equals(x, id, StringComparison.OrdinalIgnoreCase));
+
+        public string PrimaryId
+        {
+            get
+            {
+                if (IsRealRoomId(RestoredId) && MiniCount == 0)
+                    return RestoredId;
+                if (Minimized.Count == 1) return Minimized[0];
+                if (Ids.Count == 1) return Ids[0];
+                if (IsRealRoomId(RestoredId)) return RestoredId;
+                return IsRealRoomId(LastRoomId) ? LastRoomId : "";
+            }
+        }
+
+        public bool Multiple
+        {
+            get
+            {
+                int n = MiniCount;
+                if (RestoredOpen) n++;
+                if (n > 1) return true;
+                return Minimized.Count > 1 || Ids.Count > 1;
+            }
+        }
+    }
+
+    private async Task<RoomSnapshot> GetRoomSnapshotAsync()
+    {
+        var snap = new RoomSnapshot();
+        if (!IsWebViewReady) return snap;
+        string url = ImvuWebView.CoreWebView2.Source ?? "";
+        if (!url.Contains("imvu.com", StringComparison.OrdinalIgnoreCase))
+            return snap;
+
+        string? raw = await RunJsStringAsync(ImvuScripts.FindChatRoot + """
+try { return JSON.stringify(__imvuCollectRoomSnapshot()); } catch (e) { return ''; }
+""", logErrors: false);
+        if (string.IsNullOrWhiteSpace(raw)) return snap;
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+            snap.RestoredOpen = root.TryGetProperty("restoredOpen", out var ro) &&
+                                (ro.ValueKind == JsonValueKind.True ||
+                                 (ro.ValueKind == JsonValueKind.String && ro.GetString() == "true"));
+            if (root.TryGetProperty("restoredId", out var rid) && rid.ValueKind == JsonValueKind.String)
+                snap.RestoredId = (rid.GetString() ?? "").Trim();
+            if (root.TryGetProperty("lastRoomId", out var lid) && lid.ValueKind == JsonValueKind.String)
+                snap.LastRoomId = (lid.GetString() ?? "").Trim();
+            if (root.TryGetProperty("miniCount", out var mc) && mc.ValueKind == JsonValueKind.Number)
+                snap.MiniCount = mc.GetInt32();
+            if (root.TryGetProperty("roomName", out var rn) && rn.ValueKind == JsonValueKind.String)
+                snap.RoomName = (rn.GetString() ?? "").Trim();
+            void readList(string name, List<string> dest)
+            {
+                if (!root.TryGetProperty(name, out var arr) || arr.ValueKind != JsonValueKind.Array) return;
+                foreach (var el in arr.EnumerateArray())
+                {
+                    string s = (el.GetString() ?? "").Trim();
+                    if (s.Length > 0 && !dest.Contains(s, StringComparer.OrdinalIgnoreCase))
+                        dest.Add(s);
+                }
+            }
+            readList("minimized", snap.Minimized);
+            readList("ids", snap.Ids);
+        }
+        catch { }
+        return snap;
+    }
+
     private async Task<bool> IsActiveRoomPresentAsync()
     {
         if (!IsWebViewReady) return false;
@@ -18,12 +108,15 @@ public partial class MainWindow
             return false;
 
         var detected = await RunJsStringAsync(ImvuScripts.FindChatRoot + """
-const r = __imvuFindChatRoot();
-// Active room = message stream + compose input (not lobby-only)
+const r = (typeof __imvuFindRestoredChat === 'function') ? __imvuFindRestoredChat() : __imvuFindChatRoot();
 return (r.hasStream && r.hasInput) ? 'yes' : 'no';
 """, logErrors: false);
         return detected == "yes";
     }
+
+    private static bool IsRealRoomId(string? id) =>
+        !string.IsNullOrWhiteSpace(id) &&
+        id.StartsWith("room-", StringComparison.OrdinalIgnoreCase);
 
     private async Task<bool> EnsureChatPageAsync()
     {
@@ -145,6 +238,33 @@ return tryLeave();
     }
 
     private async Task ForceDismissWhisperUiAsync() => await EnsurePublicChatModeAsync();
+
+    private async Task<string?> SendNativeDmAsync(string? userId, string text)
+    {
+        string uid = (userId ?? "").Trim();
+        if (string.IsNullOrEmpty(uid))
+            return "no-uid";
+        if (!IsWebViewReady)
+            return "webview-not-ready";
+        string escapedUid = JsonSerializer.Serialize(uid);
+        string escapedText = JsonSerializer.Serialize(text ?? "");
+        string escapedSelf = JsonSerializer.Serialize(_selfDetectedUid ?? "");
+        await RunJsVoidAsync(ImvuScripts.OpenNativeDm + $$"""
+window.__imvuDmSendResult = 'pending';
+Promise.resolve(__imvuSendNativeDm({{escapedUid}}, {{escapedText}}, {{escapedSelf}}))
+  .then(function (r) { window.__imvuDmSendResult = String(r); })
+  .catch(function (e) { window.__imvuDmSendResult = 'js-err:' + (e && e.message ? e.message : String(e)); });
+""", logErrors: true);
+        for (int i = 0; i < 40; i++)
+        {
+            try { await Task.Delay(250); } catch { break; }
+            string? r = await RunJsStringAsync("return window.__imvuDmSendResult;", logErrors: false);
+            if (string.IsNullOrWhiteSpace(r) || r == "{}" || r == "pending")
+                continue;
+            return r;
+        }
+        return "timeout";
+    }
 
     /// <summary>Quick Escape/dismiss for proactive whisper retries (avoids multi-second close loops).</summary>
     private async Task QuickDismissWhisperUiAsync()
